@@ -59,3 +59,11 @@ def load_dotenv(path: str | Path = ".env") -> None:
         key = key.strip()
         value = value.strip().strip("'").strip('"')
         os.environ.setdefault(key, value)
+
+
+def find_existing_path(candidates: list[str | Path]) -> Path | None:
+    for candidate in candidates:
+        path = Path(candidate).expanduser()
+        if path.exists():
+            return path
+    return None

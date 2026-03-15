@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import time
-from dataclasses import asdict
 from typing import Any
 from urllib import error, request
 
@@ -29,7 +29,6 @@ def label_samples(config: AppConfig, runtime: RuntimeSettings) -> dict[str, int]
         raise RuntimeError("Missing OPENAI_API_KEY in environment.")
 
     rows = read_jsonl(config.labeling.input_path)
-    labeled_rows: list[dict[str, Any]] = []
     labeled_by_sample_id = {
         row.get("sample_id"): row for row in read_jsonl(config.labeling.output_path)
     }
@@ -37,58 +36,116 @@ def label_samples(config: AppConfig, runtime: RuntimeSettings) -> dict[str, int]
     created = 0
     skipped = 0
     reviewed = 0
+    start_time = time.monotonic()
+    progress = _ProgressPrinter()
+    pending_rows: list[dict[str, Any]] = []
 
     for row in rows:
         sample_id = row.get("sample_id")
         if sample_id in labeled_by_sample_id:
             skipped += 1
             continue
+        pending_rows.append(row)
+    pending = len(pending_rows)
 
-        result = _label_once(
-            text=row["text_norm"],
-            runtime=runtime,
-            config=config,
-        )
-        review_pass = 1
-        if _needs_second_review(row["text_norm"], result["confidence"], config):
-            result = _label_once(
-                text=row["text_norm"],
-                runtime=runtime,
-                config=config,
-                second_pass=True,
+    print(
+        f"Labeling started: total={len(rows)}, pending={pending}, already_labeled={skipped}, "
+        f"concurrency={max(1, config.labeling.max_concurrency)}",
+        flush=True,
+    )
+    if pending == 0:
+        return {
+            "input_count": len(rows),
+            "created": created,
+            "skipped_existing": skipped,
+            "second_reviewed": reviewed,
+        }
+
+    max_workers = min(max(1, config.labeling.max_concurrency), pending)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_row = {
+            executor.submit(_label_row, row=row, runtime=runtime, config=config): row
+            for row in pending_rows
+        }
+        try:
+            for future in concurrent.futures.as_completed(future_to_row):
+                sample_dict, row_reviewed = future.result()
+                append_jsonl(config.labeling.output_path, [sample_dict])
+                labeled_by_sample_id[sample_dict["sample_id"]] = sample_dict
+                created += 1
+                reviewed += row_reviewed
+                progress.render(
+                    completed=created,
+                    total=pending,
+                    reviewed=reviewed,
+                    start_time=start_time,
+                )
+        except Exception:
+            progress.finish(
+                completed=created,
+                total=pending,
+                reviewed=reviewed,
+                start_time=start_time,
             )
-            review_pass = 2
-            reviewed += 1
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise
 
-        sample = LabeledSample(
-            sample_id=row["sample_id"],
-            text_norm=row["text_norm"],
-            label=result["label"],
-            confidence=float(result["confidence"]),
-            reason_short=result["reason_short"],
-            model_name=runtime.model,
-            prompt_version=config.labeling.prompt_version,
-            labeled_at=utc_now_iso(),
-            source=row["source"],
-            post_id=row["post_id"],
-            comment_id=row["comment_id"],
-            parent_comment_id=row.get("parent_comment_id"),
-            feed_batch_id=row["feed_batch_id"],
-            capture_time=row["capture_time"],
-            user_hash=row["user_hash"],
-            comment_level=int(row["comment_level"]),
-            review_pass=review_pass,
-        )
-        labeled_rows.append(sample.to_dict())
-        created += 1
-
-    append_jsonl(config.labeling.output_path, labeled_rows)
+    progress.finish(
+        completed=created,
+        total=pending,
+        reviewed=reviewed,
+        start_time=start_time,
+    )
     return {
         "input_count": len(rows),
         "created": created,
         "skipped_existing": skipped,
         "second_reviewed": reviewed,
     }
+
+
+def _label_row(
+    row: dict[str, Any],
+    runtime: RuntimeSettings,
+    config: AppConfig,
+) -> tuple[dict[str, Any], int]:
+    result = _label_once(
+        text=row["text_norm"],
+        runtime=runtime,
+        config=config,
+    )
+    review_pass = 1
+    reviewed = 0
+    if _needs_second_review(row["text_norm"], result["confidence"], config):
+        result = _label_once(
+            text=row["text_norm"],
+            runtime=runtime,
+            config=config,
+            second_pass=True,
+        )
+        review_pass = 2
+        reviewed = 1
+
+    sample = LabeledSample(
+        sample_id=row["sample_id"],
+        text_norm=row["text_norm"],
+        label=result["label"],
+        confidence=float(result["confidence"]),
+        reason_short=result["reason_short"],
+        model_name=runtime.model,
+        prompt_version=config.labeling.prompt_version,
+        labeled_at=utc_now_iso(),
+        source=row["source"],
+        post_id=row["post_id"],
+        comment_id=row["comment_id"],
+        parent_comment_id=row.get("parent_comment_id"),
+        feed_batch_id=row["feed_batch_id"],
+        capture_time=row["capture_time"],
+        user_hash=row["user_hash"],
+        comment_level=int(row["comment_level"]),
+        review_pass=review_pass,
+    )
+    return sample.to_dict(), reviewed
 
 
 def _needs_second_review(text: str, confidence: float, config: AppConfig) -> bool:
@@ -185,3 +242,55 @@ def _normalize_label_result(result: dict[str, Any]) -> dict[str, Any]:
     if not reason:
         reason = "auto-labeled"
     return {"label": label, "confidence": confidence, "reason_short": reason}
+
+
+class _ProgressPrinter:
+    def __init__(self) -> None:
+        self.last_length = 0
+
+    def render(self, completed: int, total: int, reviewed: int, start_time: float) -> None:
+        line = _build_progress_line(
+            completed=completed,
+            total=total,
+            reviewed=reviewed,
+            start_time=start_time,
+        )
+        padded = line.ljust(self.last_length)
+        print(f"\r{padded}", end="", flush=True)
+        self.last_length = len(line)
+
+    def finish(self, completed: int, total: int, reviewed: int, start_time: float) -> None:
+        if total == 0:
+            return
+        self.render(completed=completed, total=total, reviewed=reviewed, start_time=start_time)
+        print("", flush=True)
+
+
+def _build_progress_line(
+    completed: int,
+    total: int,
+    reviewed: int,
+    start_time: float,
+) -> str:
+    elapsed = max(time.monotonic() - start_time, 1e-9)
+    percent = (completed / total) * 100 if total else 100.0
+    rate = completed / elapsed if completed else 0.0
+    remaining = max(total - completed, 0)
+    eta_seconds = int(remaining / rate) if rate > 0 else 0
+    return (
+        f"Progress: {completed}/{total} ({percent:.1f}%)"
+        f" | reviewed={reviewed}"
+        f" | speed={rate:.2f} samples/s"
+        f" | elapsed={_format_duration(int(elapsed))}"
+        f" | eta={_format_duration(eta_seconds)}"
+    )
+
+
+def _format_duration(total_seconds: int) -> str:
+    if total_seconds < 60:
+        return f"{total_seconds}s"
+    minutes, seconds = divmod(total_seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m{seconds:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m{seconds:02d}s"

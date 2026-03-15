@@ -46,10 +46,11 @@ labeling:
   input_path: "data/clean/clean_comments.jsonl"
   output_path: "data/labeled/labeled_comments.jsonl"
   batch_size: 1
+  max_concurrency: 1
   max_retries: 3
   retry_backoff_seconds: 2.0
-  low_confidence_threshold: 0.7
-  review_on_short_text_chars: 6
+  low_confidence_threshold: 0.5
+  review_on_short_text_chars: 3
   prompt_version: "v1-explicit-sentiment"
 
 validation:

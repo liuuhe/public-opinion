@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from app.utils import load_dotenv
+from app.utils import find_existing_path, load_dotenv
 
 try:
     import yaml
@@ -75,6 +75,7 @@ class LabelingConfig:
     input_path: str = "data/clean/clean_comments.jsonl"
     output_path: str = "data/labeled/labeled_comments.jsonl"
     batch_size: int = 1
+    max_concurrency: int = 4
     max_retries: int = 3
     retry_backoff_seconds: float = 2.0
     low_confidence_threshold: float = 0.7
@@ -128,7 +129,7 @@ def _update_dataclass(instance: Any, values: dict[str, Any] | None) -> None:
 
 def load_config(path: str = "config.yaml") -> AppConfig:
     config = AppConfig()
-    file_path = Path(path)
+    file_path = _resolve_runtime_path(path)
     if file_path.exists():
         payload = _load_config_payload(file_path)
         _update_dataclass(config.browser, payload.get("browser"))
@@ -141,7 +142,8 @@ def load_config(path: str = "config.yaml") -> AppConfig:
 
 
 def load_runtime_settings() -> RuntimeSettings:
-    load_dotenv()
+    env_path = _resolve_runtime_path(".env")
+    load_dotenv(env_path)
     return RuntimeSettings(
         api_key=os.getenv("OPENAI_API_KEY", ""),
         base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
@@ -221,3 +223,20 @@ def _parse_scalar(value: str) -> Any:
         return int(trimmed)
     except ValueError:
         return trimmed
+
+
+def _resolve_runtime_path(relative_name: str) -> Path:
+    requested = Path(relative_name).expanduser()
+    if requested.is_absolute():
+        return requested
+
+    project_root = Path(__file__).resolve().parent.parent
+    candidate = find_existing_path(
+        [
+            Path.cwd() / requested,
+            project_root / requested,
+        ]
+    )
+    if candidate is not None:
+        return candidate
+    return project_root / requested
