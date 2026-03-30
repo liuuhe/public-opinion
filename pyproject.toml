@@ -9,6 +9,9 @@ description = "Xiaohongshu public opinion data collection and labeling pipeline.
 requires-python = ">=3.11"
 dependencies = [
   "playwright>=1.44.0",
+  "accelerate>=0.34.0",
+  "torch>=2.3.0",
+  "transformers>=4.44.0",
 ]
 
 [project.scripts]

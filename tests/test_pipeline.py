@@ -13,6 +13,7 @@ from app.crawler import _build_comment_candidate, _is_plausible_comment_candidat
 from app.exporter import export_dataset_splits
 from app.labeling import _build_progress_line, _format_duration, label_samples
 from app.storage import append_jsonl, read_jsonl
+from app.training import _build_trainer, _build_training_arguments, _classification_metrics, _load_split_csv
 from app.validation import validate_labeled_dataset
 
 
@@ -365,6 +366,94 @@ class PipelineTests(unittest.TestCase):
 
             saved_report = json.loads(report_path.read_text(encoding="utf-8"))
             self.assertEqual(saved_report["posts_covered"], 2)
+
+    def test_training_helpers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = Path(tmpdir) / "train.csv"
+            csv_path.write_text(
+                "\n".join(
+                    [
+                        "sample_id,text_norm,label",
+                        "s1,很好,positive",
+                        "s2,一般,neutral",
+                        "s3,太差了,negative",
+                        "s4,,neutral",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            samples = _load_split_csv(str(csv_path))
+            self.assertEqual(len(samples), 3)
+            self.assertEqual(samples[0].label, 2)
+
+        metrics = _classification_metrics(
+            true_labels=[0, 1, 2, 2],
+            predicted_labels=[0, 1, 1, 2],
+            label_count=3,
+        )
+        self.assertEqual(metrics["accuracy"], 0.75)
+        self.assertAlmostEqual(metrics["macro_f1"], 0.7778, places=4)
+
+        class FakeTrainingArguments:
+            def __init__(
+                self,
+                output_dir=None,
+                do_train=False,
+                do_eval=False,
+                eval_strategy="no",
+                save_strategy="no",
+                report_to="none",
+            ) -> None:
+                self.output_dir = output_dir
+                self.do_train = do_train
+                self.do_eval = do_eval
+                self.eval_strategy = eval_strategy
+                self.save_strategy = save_strategy
+                self.report_to = report_to
+
+        cfg = AppConfig()
+        args = _build_training_arguments(
+            TrainingArguments=FakeTrainingArguments,
+            config=cfg,
+            output_dir=Path("/tmp/fake-output"),
+        )
+        self.assertEqual(args.output_dir, "/tmp/fake-output")
+        self.assertTrue(args.do_train)
+        self.assertTrue(args.do_eval)
+        self.assertEqual(args.eval_strategy, "epoch")
+
+        class FakeTrainer:
+            def __init__(
+                self,
+                model=None,
+                args=None,
+                train_dataset=None,
+                eval_dataset=None,
+                processing_class=None,
+                compute_metrics=None,
+                callbacks=None,
+            ) -> None:
+                self.model = model
+                self.args = args
+                self.train_dataset = train_dataset
+                self.eval_dataset = eval_dataset
+                self.processing_class = processing_class
+                self.compute_metrics = compute_metrics
+                self.callbacks = callbacks
+
+        trainer = _build_trainer(
+            Trainer=FakeTrainer,
+            model="model",
+            training_args=args,
+            train_dataset="train",
+            eval_dataset="eval",
+            tokenizer="tok",
+            callbacks=["cb"],
+        )
+        self.assertEqual(trainer.processing_class, "tok")
+        self.assertEqual(trainer.train_dataset, "train")
 
 
 if __name__ == "__main__":

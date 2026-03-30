@@ -8,6 +8,7 @@ from app.config import load_config, load_runtime_settings
 from app.crawler import crawl_home_feed, doctor_browser, login
 from app.exporter import export_dataset_splits
 from app.labeling import label_samples
+from app.training import train_bert_classifier
 from app.validation import validate_labeled_dataset
 
 
@@ -28,6 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("label", help="Label cleaned comments with an OpenAI-compatible API")
     subparsers.add_parser("validate", help="Generate validation reports and manual review samples")
     subparsers.add_parser("export_dataset", help="Export train/val/test CSV splits")
+    subparsers.add_parser("train_bert", help="Fine-tune a BERT sentiment classifier")
     return parser
 
 
@@ -73,6 +75,11 @@ def main() -> int:
 
     if args.command == "export_dataset":
         result = export_dataset_splits(config)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "train_bert":
+        result = train_bert_classifier(config)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
 

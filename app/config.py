@@ -103,6 +103,26 @@ class ExportConfig:
 
 
 @dataclass(slots=True)
+class TrainingConfig:
+    train_path: str = "data/exports/train.csv"
+    val_path: str = "data/exports/val.csv"
+    test_path: str = "data/exports/test.csv"
+    output_dir: str = "data/models/bert_finetune"
+    pretrained_model_name: str = "hfl/chinese-bert-wwm-ext"
+    max_length: int = 256
+    num_train_epochs: int = 3
+    train_batch_size: int = 16
+    eval_batch_size: int = 32
+    learning_rate: float = 2e-5
+    weight_decay: float = 0.01
+    warmup_ratio: float = 0.1
+    logging_steps: int = 20
+    seed: int = 42
+    early_stopping_patience: int = 2
+    dataloader_num_workers: int = 0
+
+
+@dataclass(slots=True)
 class RuntimeSettings:
     api_key: str = ""
     base_url: str = "https://api.openai.com/v1"
@@ -117,6 +137,7 @@ class AppConfig:
     labeling: LabelingConfig = field(default_factory=LabelingConfig)
     validation: ValidationConfig = field(default_factory=ValidationConfig)
     export: ExportConfig = field(default_factory=ExportConfig)
+    training: TrainingConfig = field(default_factory=TrainingConfig)
 
 
 def _update_dataclass(instance: Any, values: dict[str, Any] | None) -> None:
@@ -138,6 +159,7 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         _update_dataclass(config.labeling, payload.get("labeling"))
         _update_dataclass(config.validation, payload.get("validation"))
         _update_dataclass(config.export, payload.get("export"))
+        _update_dataclass(config.training, payload.get("training"))
     return config
 
 

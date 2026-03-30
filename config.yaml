@@ -67,3 +67,21 @@ export:
   val_ratio: 0.1
   test_ratio: 0.1
   random_seed: 42
+
+training:
+  train_path: "data/exports/train.csv"
+  val_path: "data/exports/val.csv"
+  test_path: "data/exports/test.csv"
+  output_dir: "data/models/bert_finetune"
+  pretrained_model_name: "hfl/chinese-bert-wwm-ext"
+  max_length: 256
+  num_train_epochs: 3
+  train_batch_size: 16
+  eval_batch_size: 32
+  learning_rate: 2.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  logging_steps: 20
+  seed: 42
+  early_stopping_patience: 2
+  dataloader_num_workers: 0

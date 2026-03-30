@@ -45,6 +45,12 @@ python -m app validate
 python -m app export_dataset
 ```
 
+6. 微调 BERT 情绪分类模型：
+
+```bash
+python -m app train_bert
+```
+
 ## Output Layout
 
 - `data/raw/raw_posts.jsonl`
@@ -55,6 +61,7 @@ python -m app export_dataset
 - `data/exports/val.csv`
 - `data/exports/test.csv`
 - `data/exports/validation_report.json`
+- `data/models/bert_finetune/`
 
 ## Notes
 
