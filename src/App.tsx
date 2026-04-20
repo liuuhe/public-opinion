@@ -102,6 +102,7 @@ function App() {
   const [error, setError] = useState<string>("");
   const [diagnostics, setDiagnostics] = useState<AnalysisDiagnostics | undefined>();
   const [isLoading, setIsLoading] = useState(false);
+  const [isReportLoading, setIsReportLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [currentMessage, setCurrentMessage] = useState("等待开始分析");
   const [events, setEvents] = useState<AnalysisStreamEvent[]>([]);
@@ -117,6 +118,7 @@ function App() {
   const [verificationCode, setVerificationCode] = useState("");
   const [isLoginActionLoading, setIsLoginActionLoading] = useState(false);
   const [isRemoteLoginLoading, setIsRemoteLoginLoading] = useState(false);
+  const [sharedReportId] = useState(() => new URLSearchParams(window.location.search).get("report") || "");
   const analyzeEventsRef = useRef<EventSource | null>(null);
   const loginEventsRef = useRef<EventSource | null>(null);
 
@@ -132,12 +134,42 @@ function App() {
         setRemoteLoginConfigured(false);
       });
     void refreshSessionStatus();
+    if (sharedReportId) {
+      void loadSavedReport(sharedReportId);
+    }
 
     return () => {
       analyzeEventsRef.current?.close();
       loginEventsRef.current?.close();
     };
-  }, []);
+  }, [sharedReportId]);
+
+  async function loadSavedReport(reportId: string) {
+    setError("");
+    setResult(null);
+    setDiagnostics(undefined);
+    setEvents([]);
+    setIsReportLoading(true);
+    setCurrentMessage("正在加载扩展采集报告...");
+    try {
+      const response = await fetch(`/api/reports/${encodeURIComponent(reportId)}`);
+      const payload = (await response.json()) as AnalysisResponse | ApiErrorResponse;
+      if (!response.ok) {
+        const errorPayload = payload as ApiErrorResponse;
+        throw new Error([errorPayload.error, errorPayload.details].filter(Boolean).join("："));
+      }
+      const report = payload as AnalysisResponse;
+      setResult(report);
+      setDiagnostics(report.diagnostics);
+      setKeyword(report.keyword);
+      setEngine(report.engine);
+      setCurrentMessage("扩展采集报告已加载");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "报告加载失败");
+    } finally {
+      setIsReportLoading(false);
+    }
+  }
 
   async function refreshSessionStatus() {
     setIsSessionLoading(true);
@@ -343,38 +375,40 @@ function App() {
     <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-5 px-4 py-5 md:px-8 md:py-7">
       <HeroCard />
 
-      <AnalyzePanel
-        keyword={keyword}
-        setKeyword={setKeyword}
-        engine={engine}
-        setEngine={setEngine}
-        maxPosts={maxPosts}
-        setMaxPosts={setMaxPosts}
-        commentsPerPost={commentsPerPost}
-        setCommentsPerPost={setCommentsPerPost}
-        useFixture={useFixture}
-        setUseFixture={setUseFixture}
-        fixtureEnabled={fixtureEnabled}
-        isLoading={isLoading}
-        onSubmit={handleAnalyze}
-        sessionStatus={sessionStatus}
-        isSessionLoading={isSessionLoading}
-        onRefreshSession={() => void refreshSessionStatus()}
-        remoteLoginConfigured={remoteLoginConfigured}
-        adminToken={adminToken}
-        setAdminToken={setAdminToken}
-        isRemoteLoginLoading={isRemoteLoginLoading}
-        remoteLoginMessage={remoteLoginMessage}
-        remoteLoginProgress={remoteLoginProgress}
-        remoteLoginScreenshot={remoteLoginScreenshot}
-        remoteLoginQr={remoteLoginQr}
-        remoteLoginId={remoteLoginId}
-        verificationCode={verificationCode}
-        setVerificationCode={setVerificationCode}
-        isLoginActionLoading={isLoginActionLoading}
-        onStartRemoteLogin={startRemoteLogin}
-        onSubmitCode={() => void submitRemoteVerificationCode()}
-      />
+      {!sharedReportId && (
+        <AnalyzePanel
+          keyword={keyword}
+          setKeyword={setKeyword}
+          engine={engine}
+          setEngine={setEngine}
+          maxPosts={maxPosts}
+          setMaxPosts={setMaxPosts}
+          commentsPerPost={commentsPerPost}
+          setCommentsPerPost={setCommentsPerPost}
+          useFixture={useFixture}
+          setUseFixture={setUseFixture}
+          fixtureEnabled={fixtureEnabled}
+          isLoading={isLoading}
+          onSubmit={handleAnalyze}
+          sessionStatus={sessionStatus}
+          isSessionLoading={isSessionLoading}
+          onRefreshSession={() => void refreshSessionStatus()}
+          remoteLoginConfigured={remoteLoginConfigured}
+          adminToken={adminToken}
+          setAdminToken={setAdminToken}
+          isRemoteLoginLoading={isRemoteLoginLoading}
+          remoteLoginMessage={remoteLoginMessage}
+          remoteLoginProgress={remoteLoginProgress}
+          remoteLoginScreenshot={remoteLoginScreenshot}
+          remoteLoginQr={remoteLoginQr}
+          remoteLoginId={remoteLoginId}
+          verificationCode={verificationCode}
+          setVerificationCode={setVerificationCode}
+          isLoginActionLoading={isLoginActionLoading}
+          onStartRemoteLogin={startRemoteLogin}
+          onSubmitCode={() => void submitRemoteVerificationCode()}
+        />
+      )}
 
       {error && (
         <Alert variant="destructive">
@@ -388,7 +422,9 @@ function App() {
         <ProgressPanel progress={progress} message={currentMessage} events={events} />
       )}
 
-      {!result && !isLoading && events.length === 0 && <EmptyReportPreview />}
+      {isReportLoading && <SavedReportLoadingCard reportId={sharedReportId} />}
+
+      {!result && !isLoading && !isReportLoading && events.length === 0 && !sharedReportId && <EmptyReportPreview />}
 
       {result && (
         <ReportDashboard
@@ -829,6 +865,25 @@ function EmptyReportPreview() {
       <CardHeader>
         <CardTitle>报告预览</CardTitle>
         <CardDescription>开始分析后，这里会展示情绪分布、样本评论、帖子来源和诊断信息。</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4 md:grid-cols-3">
+        <Skeleton className="h-32" />
+        <Skeleton className="h-32" />
+        <Skeleton className="h-32" />
+      </CardContent>
+    </Card>
+  );
+}
+
+function SavedReportLoadingCard({ reportId }: { reportId: string }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Loader2 className="size-5 animate-spin text-primary" />
+          正在加载扩展采集报告
+        </CardTitle>
+        <CardDescription>报告 ID：{reportId}</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4 md:grid-cols-3">
         <Skeleton className="h-32" />

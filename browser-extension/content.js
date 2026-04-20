@@ -1,4 +1,9 @@
 (() => {
+  if (window.__xhsOpinionContentInstalled) {
+    return;
+  }
+  window.__xhsOpinionContentInstalled = true;
+
   const MAX_NETWORK_PAYLOADS = 80;
   const networkPayloads = [];
 
@@ -20,10 +25,23 @@
   });
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type !== "XHS_CAPTURE_GET") {
+    if (message?.type === "XHS_CAPTURE_GET") {
+      sendResponse(buildCapture());
       return false;
     }
-    sendResponse(buildCapture());
+    if (message?.type === "XHS_CAPTURE_SCROLL_AND_GET") {
+      scrollAndCapture(message).then(sendResponse).catch((error) => {
+        sendResponse({
+          ok: false,
+          pageUrl: location.href,
+          pageTitle: document.title,
+          error: error instanceof Error ? error.message : String(error),
+          posts: [],
+          totals: { posts: 0, comments: 0 }
+        });
+      });
+      return true;
+    }
     return false;
   });
 
@@ -50,6 +68,28 @@
         comments: posts.reduce((sum, post) => sum + post.comments.length, 0)
       }
     };
+  }
+
+  async function scrollAndCapture(options) {
+    const scrollRounds = Number(options.scrollRounds || 5);
+    const scrollDelayMs = Number(options.scrollDelayMs || 900);
+    const maxComments = Number(options.maxComments || 80);
+    for (let index = 0; index < scrollRounds; index += 1) {
+      const scroller = findCommentScroller();
+      scroller.scrollBy({ top: Math.max(600, scroller.clientHeight || 700), behavior: "smooth" });
+      window.scrollBy({ top: 500, behavior: "smooth" });
+      await delay(scrollDelayMs);
+    }
+    const capture = buildCapture();
+    capture.posts = capture.posts.map((post) => ({
+      ...post,
+      comments: (post.comments || []).slice(0, maxComments)
+    }));
+    capture.totals = {
+      posts: capture.posts.length,
+      comments: capture.posts.reduce((sum, post) => sum + post.comments.length, 0)
+    };
+    return capture;
   }
 
   function extractDomPosts() {
@@ -304,5 +344,18 @@
       hash = Math.imul(31, hash) + text.charCodeAt(index) | 0;
     }
     return `h${Math.abs(hash)}`;
+  }
+
+  function findCommentScroller() {
+    const candidates = Array.from(document.querySelectorAll("[class*='comment'], [class*='scroll'], main, body"));
+    const scrollable = candidates.find((node) => {
+      const element = node;
+      return element.scrollHeight > element.clientHeight + 100;
+    });
+    return scrollable || document.scrollingElement || document.documentElement;
+  }
+
+  function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 })();

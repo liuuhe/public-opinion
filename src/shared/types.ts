@@ -27,6 +27,8 @@ export interface AnalyzeRequest {
 
 export interface ClientCapturedAnalyzeRequest extends AnalyzeRequest {
   pageUrl?: string;
+  sourcePageUrl?: string;
+  persistReport?: boolean;
   posts: CapturedPost[];
 }
 
@@ -91,6 +93,12 @@ export interface AnalysisExportInfo {
   markdownFilename: string;
 }
 
+export interface SavedReportInfo {
+  id: string;
+  url: string;
+  expiresAt: string;
+}
+
 export interface AnalysisResponse {
   keyword: string;
   engine: AnalysisEngine;
@@ -105,6 +113,7 @@ export interface AnalysisResponse {
   diagnostics?: AnalysisDiagnostics;
   exports: AnalysisExportInfo;
   sourceMode: "live" | "fixture" | "cache" | "client";
+  savedReport?: SavedReportInfo;
 }
 
 export interface ApiErrorResponse {
