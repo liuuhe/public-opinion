@@ -135,3 +135,22 @@ export interface SessionStatusResponse {
   latestCookieExpiry?: string;
   message: string;
 }
+
+export type RemoteLoginStage =
+  | "login_started"
+  | "login_screenshot"
+  | "login_authenticated"
+  | "login_expired"
+  | "login_error";
+
+export interface RemoteLoginStreamEvent {
+  stage: RemoteLoginStage;
+  message: string;
+  progress: number;
+  screenshotDataUrl?: string;
+  qrImageDataUrl?: string;
+  expiresAt?: string;
+  savedAt?: string;
+  error?: string;
+  code?: AnalysisErrorCode | "unauthorized" | "login_in_progress";
+}

@@ -2,11 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   BarChart3,
+  Camera,
   CheckCircle2,
   Database,
   Download,
   FileJson,
   FileText,
+  KeyRound,
   Loader2,
   MessageCircle,
   Radar,
@@ -38,6 +40,8 @@ import type {
   AnalysisStreamEvent,
   ApiErrorResponse,
   LabeledSample,
+  RemoteLoginStage,
+  RemoteLoginStreamEvent,
   SessionStatusResponse,
   SentimentBucket,
   SentimentLabel
@@ -77,6 +81,14 @@ const STAGE_META: Record<AnalysisStage, { label: string; progress: number }> = {
   failed: { label: "任务失败", progress: 100 }
 };
 
+const REMOTE_LOGIN_STAGES: RemoteLoginStage[] = [
+  "login_started",
+  "login_screenshot",
+  "login_authenticated",
+  "login_expired",
+  "login_error"
+];
+
 function App() {
   const [keyword, setKeyword] = useState("咖啡");
   const [engine, setEngine] = useState<AnalysisEngine>("llm");
@@ -93,17 +105,32 @@ function App() {
   const [events, setEvents] = useState<AnalysisStreamEvent[]>([]);
   const [sessionStatus, setSessionStatus] = useState<SessionStatusResponse | null>(null);
   const [isSessionLoading, setIsSessionLoading] = useState(false);
+  const [remoteLoginConfigured, setRemoteLoginConfigured] = useState(false);
+  const [adminToken, setAdminToken] = useState("");
+  const [remoteLoginMessage, setRemoteLoginMessage] = useState("输入管理员口令后，可在网页内刷新 Cloudflare 远程登录态。");
+  const [remoteLoginProgress, setRemoteLoginProgress] = useState(0);
+  const [remoteLoginScreenshot, setRemoteLoginScreenshot] = useState("");
+  const [remoteLoginQr, setRemoteLoginQr] = useState("");
+  const [isRemoteLoginLoading, setIsRemoteLoginLoading] = useState(false);
   const analyzeEventsRef = useRef<EventSource | null>(null);
+  const loginEventsRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     void fetch("/api/health")
       .then((response) => response.json())
-      .then((payload: { fixtureEnabled?: boolean }) => setFixtureEnabled(Boolean(payload.fixtureEnabled)))
-      .catch(() => setFixtureEnabled(false));
+      .then((payload: { fixtureEnabled?: boolean; remoteLoginConfigured?: boolean }) => {
+        setFixtureEnabled(Boolean(payload.fixtureEnabled));
+        setRemoteLoginConfigured(Boolean(payload.remoteLoginConfigured));
+      })
+      .catch(() => {
+        setFixtureEnabled(false);
+        setRemoteLoginConfigured(false);
+      });
     void refreshSessionStatus();
 
     return () => {
       analyzeEventsRef.current?.close();
+      loginEventsRef.current?.close();
     };
   }, []);
 
@@ -191,6 +218,59 @@ function App() {
     };
   }
 
+  function startRemoteLogin() {
+    setError("");
+    setIsRemoteLoginLoading(true);
+    setRemoteLoginProgress(1);
+    setRemoteLoginMessage("正在连接远程登录流...");
+    setRemoteLoginScreenshot("");
+    setRemoteLoginQr("");
+    loginEventsRef.current?.close();
+
+    const params = new URLSearchParams({ token: adminToken });
+    const stream = new EventSource(`/api/login/stream?${params.toString()}`);
+    loginEventsRef.current = stream;
+    let completed = false;
+
+    const handleLoginEvent = (payload: RemoteLoginStreamEvent) => {
+      setRemoteLoginMessage(payload.message);
+      setRemoteLoginProgress(payload.progress);
+      if (payload.screenshotDataUrl) {
+        setRemoteLoginScreenshot(payload.screenshotDataUrl);
+      }
+      if (payload.qrImageDataUrl) {
+        setRemoteLoginQr(payload.qrImageDataUrl);
+      }
+      if (payload.stage === "login_authenticated") {
+        completed = true;
+        setIsRemoteLoginLoading(false);
+        setRemoteLoginMessage(`${payload.message} 保存时间：${payload.savedAt ? new Date(payload.savedAt).toLocaleString("zh-CN") : "刚刚"}`);
+        void refreshSessionStatus();
+        stream.close();
+      }
+      if (payload.stage === "login_expired" || payload.stage === "login_error") {
+        completed = true;
+        setIsRemoteLoginLoading(false);
+        setRemoteLoginMessage([payload.message, payload.error].filter(Boolean).join("："));
+        stream.close();
+      }
+    };
+
+    REMOTE_LOGIN_STAGES.forEach((stage) => {
+      stream.addEventListener(stage, (messageEvent) => {
+        handleLoginEvent(JSON.parse(messageEvent.data) as RemoteLoginStreamEvent);
+      });
+    });
+
+    stream.onerror = () => {
+      setIsRemoteLoginLoading(false);
+      if (!completed) {
+        setRemoteLoginMessage("远程登录连接已断开；请等待当前 Browser Run 会话释放后再试。");
+      }
+      stream.close();
+    };
+  }
+
   function exportReport(format: "json" | "csv" | "markdown") {
     if (!result) {
       return;
@@ -236,6 +316,15 @@ function App() {
           sessionStatus={sessionStatus}
           isSessionLoading={isSessionLoading}
           onRefreshSession={() => void refreshSessionStatus()}
+          remoteLoginConfigured={remoteLoginConfigured}
+          adminToken={adminToken}
+          setAdminToken={setAdminToken}
+          isRemoteLoginLoading={isRemoteLoginLoading}
+          remoteLoginMessage={remoteLoginMessage}
+          remoteLoginProgress={remoteLoginProgress}
+          remoteLoginScreenshot={remoteLoginScreenshot}
+          remoteLoginQr={remoteLoginQr}
+          onStartRemoteLogin={startRemoteLogin}
         />
       </section>
 
@@ -308,6 +397,15 @@ function AnalyzePanel(props: {
   sessionStatus: SessionStatusResponse | null;
   isSessionLoading: boolean;
   onRefreshSession: () => void;
+  remoteLoginConfigured: boolean;
+  adminToken: string;
+  setAdminToken: (value: string) => void;
+  isRemoteLoginLoading: boolean;
+  remoteLoginMessage: string;
+  remoteLoginProgress: number;
+  remoteLoginScreenshot: string;
+  remoteLoginQr: string;
+  onStartRemoteLogin: () => void;
 }) {
   return (
     <Card className="bg-card/90 backdrop-blur">
@@ -324,6 +422,15 @@ function AnalyzePanel(props: {
             isLoading={props.isSessionLoading}
             status={props.sessionStatus}
             onRefresh={props.onRefreshSession}
+            remoteLoginConfigured={props.remoteLoginConfigured}
+            adminToken={props.adminToken}
+            setAdminToken={props.setAdminToken}
+            isRemoteLoginLoading={props.isRemoteLoginLoading}
+            remoteLoginMessage={props.remoteLoginMessage}
+            remoteLoginProgress={props.remoteLoginProgress}
+            remoteLoginScreenshot={props.remoteLoginScreenshot}
+            remoteLoginQr={props.remoteLoginQr}
+            onStartRemoteLogin={props.onStartRemoteLogin}
           />
 
           <div className="grid gap-2">
@@ -401,11 +508,29 @@ function AnalyzePanel(props: {
 function SessionPanel({
   isLoading,
   status,
-  onRefresh
+  onRefresh,
+  remoteLoginConfigured,
+  adminToken,
+  setAdminToken,
+  isRemoteLoginLoading,
+  remoteLoginMessage,
+  remoteLoginProgress,
+  remoteLoginScreenshot,
+  remoteLoginQr,
+  onStartRemoteLogin
 }: {
   isLoading: boolean;
   status: SessionStatusResponse | null;
   onRefresh: () => void;
+  remoteLoginConfigured: boolean;
+  adminToken: string;
+  setAdminToken: (value: string) => void;
+  isRemoteLoginLoading: boolean;
+  remoteLoginMessage: string;
+  remoteLoginProgress: number;
+  remoteLoginScreenshot: string;
+  remoteLoginQr: string;
+  onStartRemoteLogin: () => void;
 }) {
   const hasSession = Boolean(status?.hasSession);
   const hasLoginError = status?.lastErrorCode === "login_required";
@@ -416,8 +541,8 @@ function SessionPanel({
       <CardContent className="grid gap-3 px-4">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-medium">KV 登录态</p>
-            <p className="text-muted-foreground text-xs">网页不再生成二维码，避免额外占用 Cloudflare Browser Run。</p>
+            <p className="text-sm font-medium">登录态管理</p>
+            <p className="text-muted-foreground text-xs">优先使用 Cloudflare 远程扫码登录，确保登录态和抓取环境一致。</p>
           </div>
           <Badge variant={hasLoginError ? "destructive" : hasSession ? "default" : "outline"}>{statusText}</Badge>
         </div>
@@ -429,7 +554,7 @@ function SessionPanel({
             <AlertCircle />
             <AlertTitle>登录态需要刷新</AlertTitle>
             <AlertDescription>
-              {status?.lastAdvice || "Cloudflare 远程浏览器看到的是小红书登录页。请重新登录后上传 KV。"}
+              {status?.lastAdvice || "Cloudflare 远程浏览器看到的是小红书登录页。请刷新远程登录态。"}
             </AlertDescription>
           </Alert>
         )}
@@ -444,8 +569,74 @@ function SessionPanel({
             />
           </div>
         )}
+        <div className="grid gap-3 rounded-md border bg-background/70 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-medium">远程扫码刷新</p>
+              <p className="text-muted-foreground mt-1 text-xs leading-5">
+                启动 Cloudflare Browser Run 登录页，在这里扫码后直接保存远程浏览器登录态。
+              </p>
+            </div>
+            <Badge variant={remoteLoginConfigured ? "secondary" : "outline"}>
+              {remoteLoginConfigured ? "已配置口令" : "未配置口令"}
+            </Badge>
+          </div>
+          {!remoteLoginConfigured && (
+            <Alert>
+              <KeyRound />
+              <AlertTitle>需要配置管理员口令</AlertTitle>
+              <AlertDescription>运行 `wrangler secret put LOGIN_ADMIN_TOKEN` 后重新部署，再使用网页登录。</AlertDescription>
+            </Alert>
+          )}
+          <div className="grid gap-2">
+            <Label htmlFor="admin-token">管理员口令</Label>
+            <Input
+              id="admin-token"
+              type="password"
+              value={adminToken}
+              onChange={(event) => setAdminToken(event.target.value)}
+              placeholder="输入 LOGIN_ADMIN_TOKEN"
+              autoComplete="off"
+              disabled={!remoteLoginConfigured || isRemoteLoginLoading}
+            />
+          </div>
+          {(isRemoteLoginLoading || remoteLoginProgress > 0) && (
+            <div className="grid gap-2">
+              <Progress value={remoteLoginProgress} />
+              <p className="text-muted-foreground text-xs leading-5">{remoteLoginMessage}</p>
+            </div>
+          )}
+          {(remoteLoginScreenshot || remoteLoginQr) && (
+            <div className="grid gap-3">
+              {remoteLoginQr && (
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <p className="mb-2 text-xs font-medium">二维码区域</p>
+                  <img src={remoteLoginQr} alt="小红书远程登录二维码" className="mx-auto max-h-64 rounded-md object-contain" />
+                </div>
+              )}
+              {remoteLoginScreenshot && (
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <div className="mb-2 flex items-center gap-2 text-xs font-medium">
+                    <Camera className="size-3.5" />
+                    远程浏览器页面
+                  </div>
+                  <img src={remoteLoginScreenshot} alt="Cloudflare 远程登录页截图" className="w-full rounded-md border object-contain" />
+                </div>
+              )}
+            </div>
+          )}
+          <Button
+            type="button"
+            size="sm"
+            onClick={onStartRemoteLogin}
+            disabled={!remoteLoginConfigured || !adminToken.trim() || isRemoteLoginLoading}
+          >
+            {isRemoteLoginLoading ? <Loader2 className="animate-spin" /> : <KeyRound />}
+            {isRemoteLoginLoading ? "等待扫码" : "刷新远程登录态"}
+          </Button>
+        </div>
         <div className="rounded-md border bg-background/70 p-3">
-          <p className="text-xs font-medium">本地更新登录态</p>
+          <p className="text-xs font-medium">本地上传兜底</p>
           <p className="text-muted-foreground mt-1 text-xs leading-5">
             如果本地已经有 <code>sessions/xiaohongshu_storage_state.json</code>，只运行上传命令，不会打开浏览器窗口。
           </p>

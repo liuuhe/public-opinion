@@ -57,7 +57,7 @@ python -m app train_bert
 
 - 前端：React + Vite，输入关键词并展示情绪比例、评论样本和帖子来源。
 - 后端：Cloudflare Worker 的 `/api/analyze`，使用 Browser Run 抓取小红书搜索结果。
-- 登录态：网页只检查 KV 状态；登录态通过本地 `sessions/xiaohongshu_storage_state.json` 上传到 KV，避免网页登录额外占用 Browser Run。
+- 登录态：优先在网页中启动 Cloudflare 远程扫码登录；本地 `sessions/xiaohongshu_storage_state.json` 上传到 KV 作为兜底。
 - 情绪判断：默认使用 OpenAI 兼容 LLM；BERT 模式需要额外配置外部推理服务 `BERT_INFERENCE_URL`。
 - UI：使用 shadcn/ui + Tailwind，包含阶段进度、情绪图表、诊断面板和 JSON/CSV/Markdown 导出。
 
@@ -77,13 +77,17 @@ npm run cf:kv:create
 
 ```bash
 wrangler secret put OPENAI_API_KEY
+wrangler secret put LOGIN_ADMIN_TOKEN
 ```
 
 如果使用兼容 OpenAI 的服务，可在 `wrangler.jsonc` 修改 `OPENAI_BASE_URL` 和 `OPENAI_MODEL`。
 
-4. 上传小红书登录态：
+4. 登录小红书：
 
-如果本地已经有 `sessions/xiaohongshu_storage_state.json`，只需要运行上传命令。这个命令只读本地文件并写入 Cloudflare KV，不会打开浏览器窗口：
+推荐使用网页右侧“远程扫码刷新”。输入 `LOGIN_ADMIN_TOKEN` 后启动 Cloudflare 远程浏览器，用小红书 App 扫码确认，成功后 Worker 会把远程浏览器登录态保存到 KV。这样生成的登录态和后续抓取使用同一个 Cloudflare 环境。
+
+本地上传仍作为兜底。如果本地已经有 `sessions/xiaohongshu_storage_state.json`，只需要运行上传命令。这个命令只读本地文件并写入 Cloudflare KV，不会打开浏览器窗口：
+
 
 ```bash
 npm run cf:upload-session
@@ -96,7 +100,7 @@ python -m app login
 npm run cf:upload-session
 ```
 
-网页中的“KV 已就绪”只代表登录态文件存在。若诊断显示 `login_required`，说明 Cloudflare 远程浏览器已经被小红书要求重新登录，需要重新执行上面的登录和上传流程。
+网页中的“KV 已就绪”只代表登录态文件存在。若诊断显示 `login_required`，说明 Cloudflare 远程浏览器已经被小红书要求重新登录，优先使用“远程扫码刷新”重新保存登录态。
 
 5. 本地开发、构建和部署：
 

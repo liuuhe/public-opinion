@@ -8,6 +8,7 @@ export interface Env {
   OPENAI_BASE_URL?: string;
   OPENAI_MODEL?: string;
   BERT_INFERENCE_URL?: string;
+  LOGIN_ADMIN_TOKEN?: string;
   XHS_STORAGE_STATE_KEY?: string;
   ANALYSIS_CACHE_TTL_SECONDS?: string;
   BROWSER_RATE_LIMIT_COOLDOWN_SECONDS?: string;

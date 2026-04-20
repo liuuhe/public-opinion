@@ -2,6 +2,7 @@ import type { AnalyzeRequest } from "../src/shared/types";
 import { analyzeKeyword, streamAnalyzeKeyword } from "./analyze";
 import { ApiError, type Env } from "./env";
 import { errorResponse, jsonResponse, optionsResponse } from "./http";
+import { streamRemoteLogin } from "./login";
 import { getSessionStatus } from "./session";
 
 export default {
@@ -19,6 +20,7 @@ export default {
         kvBinding: Boolean(env.PUBLIC_OPINION_KV),
         llmConfigured: Boolean(env.OPENAI_API_KEY),
         bertConfigured: Boolean(env.BERT_INFERENCE_URL),
+        remoteLoginConfigured: Boolean(env.LOGIN_ADMIN_TOKEN),
         fixtureEnabled: ["1", "true", "yes"].includes(String(env.LOCAL_FIXTURE_ENABLED || "").toLowerCase()),
         model: env.OPENAI_MODEL || "gpt-4o-mini"
       });
@@ -43,6 +45,10 @@ export default {
       } catch (error) {
         return errorResponse(error);
       }
+    }
+
+    if (url.pathname === "/api/login/stream" && request.method === "GET") {
+      return streamRemoteLogin(env, url);
     }
 
     if (url.pathname.startsWith("/api/")) {

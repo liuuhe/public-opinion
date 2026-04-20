@@ -85,6 +85,13 @@ export async function recordSessionDiagnostic(env: Env, diagnostics: AnalysisDia
   }).catch(() => undefined);
 }
 
+export async function clearSessionDiagnostic(env: Env): Promise<void> {
+  if (!env.PUBLIC_OPINION_KV) {
+    return;
+  }
+  await env.PUBLIC_OPINION_KV.delete(getSessionDiagnosticKey(env)).catch(() => undefined);
+}
+
 function parseStorageState(value: string): StorageStatePayload {
   try {
     const payload = JSON.parse(value) as StorageStatePayload;
@@ -112,7 +119,7 @@ async function getLastSessionDiagnostic(env: Env): Promise<SessionDiagnosticReco
 
 function buildSessionMessage(key: string, lastDiagnostic: SessionDiagnosticRecord | null): string {
   if (lastDiagnostic?.diagnostics.errorCode === "login_required") {
-    return `KV key ${key} 已存在，但最近一次远程抓取显示登录态失效。请重新登录并上传 sessions/xiaohongshu_storage_state.json。`;
+    return `KV key ${key} 已存在，但最近一次远程抓取显示登录态失效。请优先使用网页远程扫码刷新登录态。`;
   }
 
   return `KV key ${key} 已存在，分析任务会直接复用该登录态。`;
