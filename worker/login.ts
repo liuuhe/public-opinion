@@ -6,6 +6,7 @@ import { clearSessionDiagnostic } from "./session";
 const LOGIN_LOCK_KEY = "xhs:remote_login:lock";
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 const LOGIN_POLL_MS = 2500;
+const LOGIN_VIEWPORT = { width: 1600, height: 1100 };
 const LOGIN_URL =
   "https://www.xiaohongshu.com/search_result?keyword=%E5%92%96%E5%95%A1&source=web_search_result_notes";
 const USER_AGENT =
@@ -148,7 +149,7 @@ async function prepareLoginPage(browser: BrowserLike): Promise<PageLike> {
     timezoneId: "Asia/Shanghai",
     userAgent: USER_AGENT,
     ignoreHTTPSErrors: true,
-    viewport: { width: 1280, height: 900 }
+    viewport: LOGIN_VIEWPORT
   });
   const page = await context.newPage();
   page.setDefaultTimeout?.(25000);
@@ -195,7 +196,7 @@ async function detectAuthState(page: PageLike): Promise<{ authenticated: boolean
 
 async function capturePageScreenshot(page: PageLike): Promise<string | undefined> {
   try {
-    const bytes = await page.screenshot({ type: "jpeg", quality: 72, fullPage: false });
+    const bytes = await page.screenshot({ type: "jpeg", quality: 86, fullPage: false });
     return `data:image/jpeg;base64,${bytesToBase64(bytes)}`;
   } catch {
     return undefined;
@@ -217,8 +218,8 @@ async function captureQrImage(page: PageLike): Promise<string | undefined> {
 
 async function findQrCandidate(page: PageLike): Promise<{ x: number; y: number; width: number; height: number } | null> {
   return page.evaluate(() => {
-    const viewportWidth = window.innerWidth || 1280;
-    const viewportHeight = window.innerHeight || 900;
+    const viewportWidth = window.innerWidth || 1600;
+    const viewportHeight = window.innerHeight || 1100;
     const candidates = Array.from(document.querySelectorAll("img, canvas, svg"))
       .map((node) => {
         const rect = node.getBoundingClientRect();

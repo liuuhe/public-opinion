@@ -611,16 +611,22 @@ function SessionPanel({
               {remoteLoginQr && (
                 <div className="rounded-md border bg-muted/30 p-3">
                   <p className="mb-2 text-xs font-medium">二维码区域</p>
-                  <img src={remoteLoginQr} alt="小红书远程登录二维码" className="mx-auto max-h-64 rounded-md object-contain" />
+                  <img src={remoteLoginQr} alt="小红书远程登录二维码" className="mx-auto max-h-96 rounded-md object-contain" />
                 </div>
               )}
               {remoteLoginScreenshot && (
                 <div className="rounded-md border bg-muted/30 p-3">
                   <div className="mb-2 flex items-center gap-2 text-xs font-medium">
                     <Camera className="size-3.5" />
-                    远程浏览器页面
+                    远程浏览器页面，大图可右键在新标签页打开
                   </div>
-                  <img src={remoteLoginScreenshot} alt="Cloudflare 远程登录页截图" className="w-full rounded-md border object-contain" />
+                  <a href={remoteLoginScreenshot} target="_blank" rel="noreferrer" className="block">
+                    <img
+                      src={remoteLoginScreenshot}
+                      alt="Cloudflare 远程登录页截图"
+                      className="max-h-[72vh] w-full rounded-md border object-contain"
+                    />
+                  </a>
                 </div>
               )}
             </div>
