@@ -85,6 +85,7 @@ const STAGE_META: Record<AnalysisStage, { label: string; progress: number }> = {
 const REMOTE_LOGIN_STAGES: RemoteLoginStage[] = [
   "login_started",
   "login_screenshot",
+  "login_action",
   "login_authenticated",
   "login_expired",
   "login_error"
@@ -280,9 +281,13 @@ function App() {
     };
   }
 
-  async function sendRemoteLoginAction(action: "request_code" | "submit_code") {
+  async function submitRemoteVerificationCode() {
     if (!remoteLoginId) {
       setRemoteLoginMessage("远程登录会话尚未就绪，请先点击“刷新远程登录态”。");
+      return;
+    }
+    if (!/^\d{4,8}$/.test(verificationCode)) {
+      setRemoteLoginMessage("请输入 4-8 位短信验证码。");
       return;
     }
     setIsLoginActionLoading(true);
@@ -293,7 +298,7 @@ function App() {
         body: JSON.stringify({
           token: adminToken,
           loginId: remoteLoginId,
-          action,
+          action: "submit_code",
           code: verificationCode
         })
       });
@@ -335,8 +340,8 @@ function App() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-4 py-6 md:px-8 md:py-10">
-      <section className="grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_430px]">
+    <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-5 px-4 py-5 md:px-8 md:py-7">
+      <section className="grid gap-5 xl:grid-cols-[340px_minmax(0,1fr)]">
         <HeroCard />
         <AnalyzePanel
           keyword={keyword}
@@ -368,8 +373,7 @@ function App() {
           setVerificationCode={setVerificationCode}
           isLoginActionLoading={isLoginActionLoading}
           onStartRemoteLogin={startRemoteLogin}
-          onRequestCode={() => void sendRemoteLoginAction("request_code")}
-          onSubmitCode={() => void sendRemoteLoginAction("submit_code")}
+          onSubmitCode={() => void submitRemoteVerificationCode()}
         />
       </section>
 
@@ -400,25 +404,27 @@ function App() {
 
 function HeroCard() {
   return (
-    <Card className="glass-panel overflow-hidden border-0">
-      <CardHeader className="relative z-10 p-8 md:p-12">
-        <Badge variant="outline" className="mb-6 w-fit border-primary/30 bg-background/60 text-primary">
+    <Card className="glass-panel overflow-hidden border-0 xl:sticky xl:top-7 xl:self-start">
+      <CardHeader className="relative z-10 p-5 md:p-6">
+        <Badge variant="outline" className="mb-4 w-fit border-primary/30 bg-background/60 text-primary">
           <Radar className="mr-1 size-3.5" />
           Xiaohongshu Opinion Radar
         </Badge>
-        <CardTitle className="max-w-4xl text-4xl leading-[0.96] tracking-[-0.06em] md:text-7xl">
+        <CardTitle className="text-2xl leading-tight tracking-[-0.04em] md:text-3xl">
           关键词舆情分析，从抓取到情绪报告一屏完成。
         </CardTitle>
-        <CardDescription className="mt-6 max-w-2xl text-base leading-8 md:text-lg">
-          Cloudflare Worker 调度 Browser Run 抓取小红书帖子与评论，LLM 默认执行三分类情绪判断。
-          本地 fixture 模式可用于答辩彩排，线上仍坚持真实抓取。
+        <CardDescription className="mt-4 text-sm leading-6">
+          输入关键词后抓取小红书搜索结果，汇总评论情绪、样本证据和失败诊断。线上优先真实抓取，fixture 仅用于本地答辩彩排。
         </CardDescription>
       </CardHeader>
-      <CardContent className="px-8 pb-8 md:px-12">
-        <div className="grid gap-3 sm:grid-cols-3">
+      <CardContent className="px-5 pb-5 md:px-6">
+        <div className="grid gap-2">
           <MetricPill label="平台" value="小红书" />
           <MetricPill label="部署" value="Cloudflare" />
           <MetricPill label="模式" value="真实抓取优先" />
+        </div>
+        <div className="mt-4 rounded-xl border bg-background/55 p-4 text-xs leading-5 text-muted-foreground">
+          流程：远程登录态、搜索帖子、抓取评论、情绪标注、导出报告。
         </div>
       </CardContent>
     </Card>
@@ -455,7 +461,6 @@ function AnalyzePanel(props: {
   setVerificationCode: (value: string) => void;
   isLoginActionLoading: boolean;
   onStartRemoteLogin: () => void;
-  onRequestCode: () => void;
   onSubmitCode: () => void;
 }) {
   return (
@@ -486,7 +491,6 @@ function AnalyzePanel(props: {
             setVerificationCode={props.setVerificationCode}
             isLoginActionLoading={props.isLoginActionLoading}
             onStartRemoteLogin={props.onStartRemoteLogin}
-            onRequestCode={props.onRequestCode}
             onSubmitCode={props.onSubmitCode}
           />
 
@@ -579,7 +583,6 @@ function SessionPanel({
   setVerificationCode,
   isLoginActionLoading,
   onStartRemoteLogin,
-  onRequestCode,
   onSubmitCode
 }: {
   isLoading: boolean;
@@ -598,7 +601,6 @@ function SessionPanel({
   setVerificationCode: (value: string) => void;
   isLoginActionLoading: boolean;
   onStartRemoteLogin: () => void;
-  onRequestCode: () => void;
   onSubmitCode: () => void;
 }) {
   const hasSession = Boolean(status?.hasSession);
@@ -712,7 +714,7 @@ function SessionPanel({
           <div className="grid gap-2 rounded-md border bg-muted/20 p-3">
             <p className="text-xs font-medium">短信验证码</p>
             <p className="text-muted-foreground text-xs leading-5">
-              如果远程页面要求手机验证码，先在截图中确认手机号页面已出现，再点击获取验证码；收到短信后填入验证码并提交。
+              验证码由小红书在扫码后自动发送。收到短信后填入验证码，系统会写入远程浏览器并尝试点击登录、确定或提交按钮。
             </p>
             <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
               <Input
@@ -725,23 +727,14 @@ function SessionPanel({
               />
               <Button
                 type="button"
-                variant="outline"
-                onClick={onRequestCode}
-                disabled={!remoteLoginId || isLoginActionLoading}
+                variant="secondary"
+                onClick={onSubmitCode}
+                disabled={!remoteLoginId || !/^\d{4,8}$/.test(verificationCode) || isLoginActionLoading}
               >
                 {isLoginActionLoading ? <Loader2 className="animate-spin" /> : null}
-                获取验证码
+                填写并提交验证码
               </Button>
             </div>
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={onSubmitCode}
-              disabled={!remoteLoginId || !/^\d{4,8}$/.test(verificationCode) || isLoginActionLoading}
-            >
-              {isLoginActionLoading ? <Loader2 className="animate-spin" /> : null}
-              提交验证码到远程浏览器
-            </Button>
           </div>
         </div>
         <div className="rounded-md border bg-background/70 p-3">
