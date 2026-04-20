@@ -90,7 +90,7 @@ async function analyzeCapture() {
     return;
   }
   const workerUrl = elements.workerUrl.value.trim().replace(/\/+$/, "");
-  const keyword = elements.keyword.value.trim() || currentCapture.keywordGuess || "小红书";
+  const keyword = decodeText(elements.keyword.value.trim() || currentCapture.keywordGuess || "小红书");
 
   setStatus("正在发送到 Worker 做情绪分析...");
   elements.analyzeBtn.disabled = true;
@@ -151,4 +151,20 @@ function escapeHtml(value) {
     "\"": "&quot;",
     "'": "&#39;"
   })[char]);
+}
+
+function decodeText(value) {
+  let decoded = String(value || "");
+  for (let index = 0; index < 2; index += 1) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) {
+        break;
+      }
+      decoded = next;
+    } catch {
+      break;
+    }
+  }
+  return decoded.trim();
 }

@@ -250,7 +250,7 @@
 
   function guessKeyword() {
     const url = new URL(location.href);
-    return cleanText(url.searchParams.get("keyword") || document.title.split(" - ")[0] || "小红书");
+    return cleanText(decodeText(url.searchParams.get("keyword") || document.title.split(" - ")[0] || "小红书"));
   }
 
   function extractTags() {
@@ -270,6 +270,22 @@
 
   function cleanText(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
+  }
+
+  function decodeText(value) {
+    let decoded = String(value || "");
+    for (let index = 0; index < 2; index += 1) {
+      try {
+        const next = decodeURIComponent(decoded);
+        if (next === decoded) {
+          break;
+        }
+        decoded = next;
+      } catch {
+        break;
+      }
+    }
+    return decoded;
   }
 
   function isMeaningfulComment(text) {

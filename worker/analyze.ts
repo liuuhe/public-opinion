@@ -342,7 +342,7 @@ function normalizeEngine(value: unknown): AnalysisEngine {
 }
 
 function normalizeKeyword(value: unknown): string {
-  const keyword = String(value || "").trim();
+  const keyword = decodeMaybeEncodedText(value).trim();
   if (!keyword) {
     throw new ApiError(400, "请输入关键词");
   }
@@ -350,6 +350,22 @@ function normalizeKeyword(value: unknown): string {
     throw new ApiError(400, "关键词过长", "请将关键词控制在 60 个字符以内。");
   }
   return keyword;
+}
+
+function decodeMaybeEncodedText(value: unknown): string {
+  let decoded = String(value || "");
+  for (let index = 0; index < 2; index += 1) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) {
+        break;
+      }
+      decoded = next;
+    } catch {
+      break;
+    }
+  }
+  return decoded;
 }
 
 function analyzeRequestFromUrl(url: URL): AnalyzeRequest {
