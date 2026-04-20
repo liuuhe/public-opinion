@@ -341,41 +341,40 @@ function App() {
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-5 px-4 py-5 md:px-8 md:py-7">
-      <section className="grid gap-5 xl:grid-cols-[340px_minmax(0,1fr)]">
-        <HeroCard />
-        <AnalyzePanel
-          keyword={keyword}
-          setKeyword={setKeyword}
-          engine={engine}
-          setEngine={setEngine}
-          maxPosts={maxPosts}
-          setMaxPosts={setMaxPosts}
-          commentsPerPost={commentsPerPost}
-          setCommentsPerPost={setCommentsPerPost}
-          useFixture={useFixture}
-          setUseFixture={setUseFixture}
-          fixtureEnabled={fixtureEnabled}
-          isLoading={isLoading}
-          onSubmit={handleAnalyze}
-          sessionStatus={sessionStatus}
-          isSessionLoading={isSessionLoading}
-          onRefreshSession={() => void refreshSessionStatus()}
-          remoteLoginConfigured={remoteLoginConfigured}
-          adminToken={adminToken}
-          setAdminToken={setAdminToken}
-          isRemoteLoginLoading={isRemoteLoginLoading}
-          remoteLoginMessage={remoteLoginMessage}
-          remoteLoginProgress={remoteLoginProgress}
-          remoteLoginScreenshot={remoteLoginScreenshot}
-          remoteLoginQr={remoteLoginQr}
-          remoteLoginId={remoteLoginId}
-          verificationCode={verificationCode}
-          setVerificationCode={setVerificationCode}
-          isLoginActionLoading={isLoginActionLoading}
-          onStartRemoteLogin={startRemoteLogin}
-          onSubmitCode={() => void submitRemoteVerificationCode()}
-        />
-      </section>
+      <HeroCard />
+
+      <AnalyzePanel
+        keyword={keyword}
+        setKeyword={setKeyword}
+        engine={engine}
+        setEngine={setEngine}
+        maxPosts={maxPosts}
+        setMaxPosts={setMaxPosts}
+        commentsPerPost={commentsPerPost}
+        setCommentsPerPost={setCommentsPerPost}
+        useFixture={useFixture}
+        setUseFixture={setUseFixture}
+        fixtureEnabled={fixtureEnabled}
+        isLoading={isLoading}
+        onSubmit={handleAnalyze}
+        sessionStatus={sessionStatus}
+        isSessionLoading={isSessionLoading}
+        onRefreshSession={() => void refreshSessionStatus()}
+        remoteLoginConfigured={remoteLoginConfigured}
+        adminToken={adminToken}
+        setAdminToken={setAdminToken}
+        isRemoteLoginLoading={isRemoteLoginLoading}
+        remoteLoginMessage={remoteLoginMessage}
+        remoteLoginProgress={remoteLoginProgress}
+        remoteLoginScreenshot={remoteLoginScreenshot}
+        remoteLoginQr={remoteLoginQr}
+        remoteLoginId={remoteLoginId}
+        verificationCode={verificationCode}
+        setVerificationCode={setVerificationCode}
+        isLoginActionLoading={isLoginActionLoading}
+        onStartRemoteLogin={startRemoteLogin}
+        onSubmitCode={() => void submitRemoteVerificationCode()}
+      />
 
       {error && (
         <Alert variant="destructive">
@@ -404,29 +403,31 @@ function App() {
 
 function HeroCard() {
   return (
-    <Card className="glass-panel overflow-hidden border-0 xl:sticky xl:top-7 xl:self-start">
-      <CardHeader className="relative z-10 p-5 md:p-6">
-        <Badge variant="outline" className="mb-4 w-fit border-primary/30 bg-background/60 text-primary">
-          <Radar className="mr-1 size-3.5" />
-          Xiaohongshu Opinion Radar
-        </Badge>
-        <CardTitle className="text-2xl leading-tight tracking-[-0.04em] md:text-3xl">
-          关键词舆情分析，从抓取到情绪报告一屏完成。
-        </CardTitle>
-        <CardDescription className="mt-4 text-sm leading-6">
-          输入关键词后抓取小红书搜索结果，汇总评论情绪、样本证据和失败诊断。线上优先真实抓取，fixture 仅用于本地答辩彩排。
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="px-5 pb-5 md:px-6">
-        <div className="grid gap-2">
-          <MetricPill label="平台" value="小红书" />
-          <MetricPill label="部署" value="Cloudflare" />
-          <MetricPill label="模式" value="真实抓取优先" />
+    <Card className="glass-panel overflow-hidden border-0">
+      <div className="grid gap-5 p-5 md:grid-cols-[minmax(0,1fr)_420px] md:items-center md:p-6">
+        <div>
+          <Badge variant="outline" className="mb-4 w-fit border-primary/30 bg-background/60 text-primary">
+            <Radar className="mr-1 size-3.5" />
+            Xiaohongshu Opinion Radar
+          </Badge>
+          <CardTitle className="text-2xl leading-tight tracking-[-0.04em] md:text-3xl">
+            关键词舆情分析，从抓取到情绪报告一屏完成。
+          </CardTitle>
+          <CardDescription className="mt-3 max-w-3xl text-sm leading-6">
+            输入关键词后抓取小红书搜索结果，汇总评论情绪、样本证据和失败诊断。线上优先真实抓取，fixture 仅用于本地答辩彩排。
+          </CardDescription>
         </div>
-        <div className="mt-4 rounded-xl border bg-background/55 p-4 text-xs leading-5 text-muted-foreground">
-          流程：远程登录态、搜索帖子、抓取评论、情绪标注、导出报告。
+        <div className="grid gap-3">
+          <div className="grid gap-2 sm:grid-cols-3">
+            <MetricPill label="平台" value="小红书" />
+            <MetricPill label="部署" value="Cloudflare" />
+            <MetricPill label="模式" value="真实抓取优先" />
+          </div>
+          <div className="rounded-xl border bg-background/55 p-3 text-xs leading-5 text-muted-foreground">
+            流程：远程登录态、搜索帖子、抓取评论、情绪标注、导出报告。
+          </div>
         </div>
-      </CardContent>
+      </div>
     </Card>
   );
 }
