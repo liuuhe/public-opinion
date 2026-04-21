@@ -244,6 +244,7 @@ function renderAutoStatus(status) {
     status.discoveredPosts ? `发现帖子：${status.discoveredPosts}` : "",
     status.currentIndex ? `当前进度：${status.currentIndex}/${status.discoveredPosts || status.targetPosts}` : "",
     `已采集：${status.capturedPosts || 0} 篇 / ${status.capturedComments || 0} 条评论`,
+    status.warnings?.length ? `提示：${status.warnings.at(-1)}` : "",
     status.error ? `错误：${status.error}` : ""
   ].filter(Boolean);
   setStatus(lines.join("\n"));

@@ -55,7 +55,7 @@
   function buildCapture() {
     const networkPosts = normalizeNetworkPayloads(networkPayloads.map((item) => item.payload));
     const domPosts = extractDomPosts();
-    const posts = mergePosts([...networkPosts, ...domPosts]);
+    const posts = mergePosts([...domPosts, ...networkPosts]);
     return {
       ok: true,
       pageUrl: location.href,
@@ -198,6 +198,8 @@
     const postId = cleanText(node.note_id || node.noteId || noteCard.note_id || noteCard.noteId || noteCard.id || node.id);
     const title = cleanText(noteCard.display_title || noteCard.title || noteCard.name || "");
     const description = cleanText(noteCard.desc || noteCard.description || noteCard.content || "");
+    const xsecToken = cleanText(node.xsec_token || node.xsecToken || noteCard.xsec_token || noteCard.xsecToken || "");
+    const xsecSource = cleanText(node.xsec_source || node.xsecSource || noteCard.xsec_source || noteCard.xsecSource || "pc_search");
     const looksLikePost = postId && (title || description) && (
       "note_card" in node ||
       "noteCard" in node ||
@@ -210,7 +212,7 @@
     }
     return {
       postId,
-      url: makePostUrl(postId),
+      url: makePostUrl(postId, { xsecToken, xsecSource }),
       title: title || description.slice(0, 40) || "小红书帖子",
       description,
       authorHash: cleanText(noteCard.user?.user_id || noteCard.user_info?.user_id || "network-author"),
@@ -270,6 +272,9 @@
       }
       existing.title = existing.title || post.title;
       existing.description = existing.description || post.description;
+      if (shouldPreferPostUrl(post.url, existing.url)) {
+        existing.url = post.url;
+      }
       existing.comments = dedupeComments([...(existing.comments || []), ...(post.comments || [])]);
     }
     return Array.from(merged.values()).slice(0, 30);
@@ -304,8 +309,30 @@
     return String(url || "").match(/\/(?:explore|discovery\/item)\/([^/?#]+)/)?.[1] || "";
   }
 
-  function makePostUrl(postId) {
-    return `https://www.xiaohongshu.com/explore/${postId}`;
+  function makePostUrl(postId, options = {}) {
+    const url = new URL(`https://www.xiaohongshu.com/explore/${postId}`);
+    if (options.xsecToken) {
+      url.searchParams.set("xsec_token", options.xsecToken);
+    }
+    if (options.xsecSource) {
+      url.searchParams.set("xsec_source", options.xsecSource);
+    }
+    return url.href;
+  }
+
+  function shouldPreferPostUrl(nextUrl, currentUrl) {
+    const next = String(nextUrl || "");
+    const current = String(currentUrl || "");
+    if (!current) {
+      return true;
+    }
+    if (next.includes("xsec_token") && !current.includes("xsec_token")) {
+      return true;
+    }
+    if (next.includes("?") && !current.includes("?")) {
+      return true;
+    }
+    return false;
   }
 
   function cleanText(value) {

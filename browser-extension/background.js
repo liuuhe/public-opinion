@@ -89,6 +89,15 @@ async function runAutoCapture(options) {
       workerTabId = await openOrReuseWorkerTab(workerTabId, candidate.url);
       await waitForTabComplete(workerTabId, 12000);
       await delay(1000);
+      const openedTab = await chrome.tabs.get(workerTabId);
+      if (isXhsSecurityRedirect(openedTab.url || "")) {
+        taskStatus.warnings.push(`第 ${index + 1} 篇被小红书安全跳转拦截：${candidate.url}`);
+        updateStatus({
+          message: `第 ${index + 1}/${candidates.length} 篇被安全跳转拦截，已跳过。`,
+          warnings: taskStatus.warnings
+        });
+        continue;
+      }
 
       const capture = await sendCaptureMessage(workerTabId, {
         type: "XHS_CAPTURE_SCROLL_AND_GET",
@@ -233,6 +242,10 @@ function dedupePosts(posts) {
     results.push(post);
   }
   return results;
+}
+
+function isXhsSecurityRedirect(url) {
+  return /xiaohongshu\.com\/404\/sec_/i.test(String(url || ""));
 }
 
 function updateStatus(patch) {
