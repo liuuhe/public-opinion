@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urljoin, urlparse
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from app.config import AppConfig
@@ -265,9 +266,11 @@ def _collect_keyword_post_urls(
                 .replaceAll("\\/", "/")
                 .replaceAll("&amp;", "&");
               const hrefs = anchors.map((anchor) => anchor.href).filter(Boolean);
+              const tokenHrefs = hrefs.filter((href) => href.includes("/search_result/") && href.includes("xsec_token="));
+              const barePostHrefs = hrefs.filter((href) => href.includes("/explore/") || href.includes("/discovery/item/"));
               const matches = Array.from(html.matchAll(/(?:https?:\\/\\/www\\.xiaohongshu\\.com)?\\/(?:explore|discovery\\/item)\\/([0-9a-fA-F]{12,32})(?:[^"'<>\\s]*)/g))
                 .map((match) => match[0]);
-              return hrefs.concat(matches);
+              return tokenHrefs.concat(barePostHrefs, matches);
             }
             """
         )
@@ -340,10 +343,14 @@ def _walk_post_payload(node: Any) -> list[dict[str, str]]:
 
 
 def _normalize_post_url(url: str) -> str | None:
-    if not any(pattern in url for pattern in POST_URL_PATTERNS):
-        return None
     parsed = urlparse(url)
     path = parsed.path.rstrip("/")
+
+    search_match = re.match(r"/search_result/([A-Za-z0-9]+)$", path)
+    if search_match and "xsec_token=" in parsed.query:
+        normalized = f"https://www.xiaohongshu.com/explore/{search_match.group(1)}"
+        return f"{normalized}?{parsed.query}"
+
     if not any(pattern in path for pattern in POST_URL_PATTERNS):
         return None
     normalized = urljoin(f"{parsed.scheme}://{parsed.netloc}", path)
@@ -812,9 +819,21 @@ def _post_capture_to_worker(worker_url: str, payload: dict[str, Any]) -> dict[st
     request = Request(
         endpoint,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+        },
         method="POST",
     )
-    with urlopen(request, timeout=120) as response:
-        response_body = response.read().decode("utf-8")
+    try:
+        with urlopen(request, timeout=120) as response:
+            response_body = response.read().decode("utf-8")
+    except HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Worker request failed: HTTP {exc.code} {error_body[:500]}") from exc
     return json.loads(response_body)

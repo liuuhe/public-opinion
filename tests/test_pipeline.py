@@ -31,6 +31,18 @@ class PipelineTests(unittest.TestCase):
             "?xsec_token=abc123&xsec_source=pc_feed",
         )
 
+    def test_normalize_search_result_token_url_to_explore_url(self) -> None:
+        url = (
+            "https://www.xiaohongshu.com/search_result/69afa831000000002603377b"
+            "?xsec_token=abc123&xsec_source="
+        )
+        normalized = _normalize_post_url(url)
+        self.assertEqual(
+            normalized,
+            "https://www.xiaohongshu.com/explore/69afa831000000002603377b"
+            "?xsec_token=abc123&xsec_source=",
+        )
+
     def test_extract_post_urls_from_network_payloads(self) -> None:
         payloads = [
             {
