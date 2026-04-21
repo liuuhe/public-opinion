@@ -23,6 +23,9 @@ const SYSTEM_PROMPT = `你是网络舆情情绪标注器。任务是把评论标
 5. 无法确定时优先选择 neutral。
 6. 必须返回严格 JSON，格式为 {"labels":[{"sample_id":"...","label":"positive|neutral|negative","confidence":0.0,"reason_short":"..."}]}。`;
 
+const LLM_CHUNK_SIZE = 20;
+const LLM_CHUNK_CONCURRENCY = 3;
+
 interface LabelResult {
   sampleId: string;
   label: SentimentLabel;
@@ -86,16 +89,17 @@ async function labelWithLlm(
     throw new ApiError(500, "缺少 OPENAI_API_KEY", "请先运行 `wrangler secret put OPENAI_API_KEY`。", "llm_failed");
   }
 
-  const results: LabelResult[] = [];
-  for (const chunk of chunkArray(comments, 20)) {
+  const chunks = chunkArray(comments, LLM_CHUNK_SIZE);
+  const results = (await mapWithConcurrency(chunks, LLM_CHUNK_CONCURRENCY, async (chunk, index) => {
     try {
-      results.push(...(await labelLlmChunk(env, chunk)));
+      return await labelLlmChunk(env, chunk);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      warnings.push(`LLM 批次解析失败，${chunk.length} 条评论已使用本地保守兜底：${detail}`);
-      results.push(...chunk.map(heuristicLabel));
+      warnings.push(`LLM 第 ${index + 1}/${chunks.length} 批解析失败，${chunk.length} 条评论已使用本地保守兜底：${detail}`);
+      return chunk.map(heuristicLabel);
     }
-  }
+  })).flat();
+
   const labeledIds = new Set(results.map((result) => result.sampleId));
   const missing = comments.filter((comment) => !labeledIds.has(comment.sampleId));
   if (missing.length > 0) {
@@ -267,4 +271,24 @@ function chunkArray<T>(items: T[], size: number): T[][] {
     chunks.push(items.slice(index, index + size));
   }
   return chunks;
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(concurrency, items.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+      }
+    })
+  );
+  return results;
 }

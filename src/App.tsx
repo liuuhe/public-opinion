@@ -48,6 +48,7 @@ function App() {
   const [result, setResult] = useState<AnalysisResponse | null>(null);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState("");
 
   async function handleFileUpload(file: File | undefined) {
     if (!file) {
@@ -55,6 +56,7 @@ function App() {
     }
     setJsonText(await file.text());
     setError("");
+    setProcessingStatus(`已载入 ${file.name}，点击“生成/查看报告”开始处理。`);
   }
 
   async function handleJsonDrop(event: DragEvent<HTMLDivElement>) {
@@ -67,13 +69,27 @@ function App() {
 
   async function analyzeJson() {
     setError("");
+    setProcessingStatus("");
     setIsLoading(true);
+    let progressTimer: ReturnType<typeof setInterval> | null = null;
     try {
       const payload = JSON.parse(jsonText || "{}") as Partial<ClientCapturedAnalyzeRequest & AnalysisResponse>;
       if (isAnalysisResponse(payload)) {
+        setProcessingStatus(`已识别为分析报告 JSON，包含 ${payload.totals?.validSamples || 0} 条有效样本，正在直接渲染。`);
         setResult(payload);
         return;
       }
+      const stats = summarizeCapturePayload(payload);
+      setProcessingStatus(
+        `已识别为插件采集 JSON：${stats.posts} 篇帖子、${stats.comments} 条评论。正在发送 Worker 重新分析...`
+      );
+      const startedAt = Date.now();
+      progressTimer = setInterval(() => {
+        const elapsed = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+        setProcessingStatus(
+          `Worker 正在分析 ${stats.comments} 条评论，已等待 ${elapsed} 秒。首次冷启动或评论较多时会更慢。`
+        );
+      }, 1000);
       const requestPayload: ClientCapturedAnalyzeRequest = {
         keyword: String(payload.keyword || keyword),
         engine,
@@ -91,16 +107,21 @@ function App() {
       if (!response.ok) {
         throw new Error([analysis.error, analysis.details].filter(Boolean).join("："));
       }
+      setProcessingStatus(`分析完成：${analysis.totals?.validSamples || 0} 条有效样本。`);
       setResult(analysis as AnalysisResponse);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "JSON 解析或分析失败");
     } finally {
+      if (progressTimer) {
+        clearInterval(progressTimer);
+      }
       setIsLoading(false);
     }
   }
 
   async function loadFixture() {
     setError("");
+    setProcessingStatus("正在加载演示报告...");
     setIsLoading(true);
     try {
       const response = await fetch(`${apiBaseUrl(workerUrl)}/api/analyze`, {
@@ -112,6 +133,7 @@ function App() {
       if (!response.ok) {
         throw new Error([payload.error, payload.details].filter(Boolean).join("："));
       }
+      setProcessingStatus("演示报告加载完成。");
       setResult(payload as AnalysisResponse);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "演示数据加载失败");
@@ -207,6 +229,7 @@ function App() {
             <Button type="button" onClick={() => void analyzeJson()} disabled={isLoading || !jsonText.trim()}>
               {isLoading ? "处理中..." : "生成/查看报告"}
             </Button>
+            {processingStatus && <p className="text-muted-foreground text-sm leading-6">{processingStatus}</p>}
           </CardContent>
         </Card>
       </section>
@@ -220,7 +243,14 @@ function App() {
       )}
 
       {!result && !isLoading && <EmptyReportPreview />}
-      {isLoading && <Progress value={70} />}
+      {isLoading && (
+        <Card>
+          <CardContent className="grid gap-3 p-4">
+            <Progress value={70} />
+            {processingStatus && <p className="text-muted-foreground text-sm leading-6">{processingStatus}</p>}
+          </CardContent>
+        </Card>
+      )}
       {result && <ReportDashboard result={result} onExport={exportReport} />}
     </main>
   );
@@ -636,6 +666,14 @@ function insightBadgeClass(tone: AnalysisResponse["insights"][number]["tone"]) {
 
 function isAnalysisResponse(value: Partial<AnalysisResponse>): value is AnalysisResponse {
   return Boolean(value && value.distribution && value.totals && value.labeledSamples);
+}
+
+function summarizeCapturePayload(value: Partial<ClientCapturedAnalyzeRequest & AnalysisResponse>) {
+  const posts = Array.isArray(value.posts) ? value.posts : [];
+  return {
+    posts: posts.length,
+    comments: posts.reduce((sum, post) => sum + (Array.isArray(post.comments) ? post.comments.length : 0), 0)
+  };
 }
 
 function getDominantBucket(distribution: AnalysisResponse["distribution"]): SentimentBucket {
