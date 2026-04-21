@@ -98,8 +98,19 @@ async function runAutoCapture(options) {
     concurrency
   });
 
+  let activeTabId = 0;
+  let searchCapture = null;
+  let candidates = [];
+  let index = 0;
+  const candidateQueue = [];
+  const queuedCandidateKeys = new Set();
+  const capturedPosts = [];
+  const visitedCandidateKeys = new Set();
+  const discoveryLock = createAsyncLock();
+  const workerCount = Math.min(concurrency, targetPosts);
+
   try {
-    const activeTabId = Number(options.activeTabId);
+    activeTabId = Number(options.activeTabId);
     if (!activeTabId) {
       throw new Error("没有可用的小红书标签页。");
     }
@@ -113,12 +124,10 @@ async function runAutoCapture(options) {
       await openSearchPageForKeyword(activeTabId, keyword);
     }
 
-    let searchCapture = await discoverCandidates(activeTabId, Math.min(5, targetPosts));
+    searchCapture = await discoverCandidates(activeTabId, Math.min(5, targetPosts));
     latestSearchCapture = searchCapture;
-    const candidateQueue = [];
-    const queuedCandidateKeys = new Set();
     enqueueCandidates(candidateQueue, queuedCandidateKeys, searchCapture?.posts || [], targetPosts);
-    let candidates = candidateQueue.slice();
+    candidates = candidateQueue.slice();
 
     if (candidates.length === 0) {
       throw new Error(buildDiscoveryError(searchCapture));
@@ -130,11 +139,6 @@ async function runAutoCapture(options) {
       discoveredPosts: candidates.length
     });
 
-    const capturedPosts = [];
-    const visitedCandidateKeys = new Set();
-    let index = 0;
-    const discoveryLock = createAsyncLock();
-    const workerCount = Math.min(concurrency, targetPosts);
     await Promise.all(
       Array.from({ length: workerCount }, (_, workerIndex) => capturePostsWorker(workerIndex + 1))
     );
