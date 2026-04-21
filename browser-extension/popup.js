@@ -211,15 +211,20 @@ async function analyzePausedAutoCapture() {
 
 function renderResult(result) {
   const distribution = result.distribution || {};
+  const report = result.report || {};
+  const dataQuality = report.dataQuality || {};
   elements.result.hidden = false;
   elements.result.innerHTML = [
     metric("关键词", result.keyword),
-    metric("摘要", result.summary),
+    metric("摘要", report.executiveSummary || result.summary),
     metric("帖子", result.totals?.posts ?? 0),
     metric("评论", result.totals?.comments ?? 0),
     metric("正向", distribution.positive?.count ?? 0),
     metric("中性", distribution.neutral?.count ?? 0),
     metric("负向", distribution.negative?.count ?? 0),
+    dataQuality.message ? metric("数据质量", dataQuality.message) : "",
+    renderListMetric("关键发现", report.keyFindings?.map((item) => `${item.title}：${item.detail}`)),
+    renderListMetric("建议动作", report.recommendedActions),
     result.savedReport?.url
       ? metric("完整报告", `<a href="${escapeHtml(result.savedReport.url)}" target="_blank">打开网页报告</a>`, true)
       : ""
@@ -229,6 +234,17 @@ function renderResult(result) {
 function metric(label, value, html = false) {
   const safeValue = html ? String(value) : escapeHtml(String(value));
   return `<div class="metric"><strong>${escapeHtml(label)}</strong><span>${safeValue}</span></div>`;
+}
+
+function renderListMetric(label, items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return "";
+  }
+  return metric(
+    label,
+    `<ul>${items.slice(0, 4).map((item) => `<li>${escapeHtml(String(item))}</li>`).join("")}</ul>`,
+    true
+  );
 }
 
 function setStatus(message) {

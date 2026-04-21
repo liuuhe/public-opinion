@@ -71,8 +71,8 @@ export async function analyzeClientCapture(
     commentCountsByPost: Object.fromEntries(posts.map((post) => [post.postId, post.comments.length])),
     advice:
       posts.length === 0
-        ? "本地 Playwright 没有采集到帖子。请确认小红书已登录、关键词存在结果，并调高滚动轮次后重试。"
-        : "本次数据由本地 Playwright 在已登录浏览器环境采集；Worker 只执行情绪标注和报告生成。"
+        ? "浏览器插件没有采集到帖子。请确认小红书已登录、关键词存在结果，并重新加载插件后重试。"
+        : "本次数据由浏览器插件在已登录小红书页面采集；Worker 执行情绪标注、摘要和报告生成。"
   };
 
   if (posts.length === 0) {

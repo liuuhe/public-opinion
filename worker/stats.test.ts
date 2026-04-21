@@ -73,6 +73,9 @@ describe("sentiment statistics", () => {
     expect(response.totals.comments).toBe(1);
     expect(response.distribution.positive.ratio).toBe(1);
     expect(response.summary).toContain("咖啡");
+    expect(response.insights.length).toBeGreaterThan(0);
+    expect(response.report.headline).toContain("咖啡");
+    expect(response.report.recommendedActions.length).toBeGreaterThan(0);
     expect(response.labeledSamples).toHaveLength(1);
     expect(response.exports.jsonFilename).toContain("咖啡");
   });

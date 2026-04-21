@@ -93,7 +93,7 @@ button:disabled {
 
 .metric {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 90px minmax(0, 1fr);
   gap: 8px;
   padding: 6px 0;
   border-bottom: 1px solid #ead9c8;
@@ -101,4 +101,14 @@ button:disabled {
 
 .metric:last-child {
   border-bottom: 0;
+}
+
+.metric span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.metric ul {
+  margin: 0;
+  padding-left: 18px;
 }

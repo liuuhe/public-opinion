@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { AlertCircle, BarChart3, Database, Download, FileJson, FileText, MessageCircle, Radar, Upload } from "lucide-react";
+import { AlertCircle, BarChart3, CheckCircle2, Database, Download, FileJson, FileText, Lightbulb, MessageCircle, Radar, Upload } from "lucide-react";
 import { Bar, BarChart, Cell, Pie, PieChart, Tooltip, XAxis, YAxis } from "recharts";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -292,6 +292,7 @@ function ReportDashboard({ result, onExport }: { result: AnalysisResponse; onExp
     [result]
   );
   const dominant = getDominantBucket(result.distribution);
+  const report = result.report;
 
   return (
     <Card className="overflow-hidden">
@@ -304,9 +305,9 @@ function ReportDashboard({ result, onExport }: { result: AnalysisResponse; onExp
               <Badge variant="outline">{new Date(result.capturedAt).toLocaleString("zh-CN")}</Badge>
             </div>
             <CardTitle className="text-3xl tracking-tight">
-              “{result.keyword}”主要情绪：<span className="text-primary">{LABEL_META[dominant.label].name}</span>
+              {report?.headline || `“${result.keyword}”主要情绪：${LABEL_META[dominant.label].name}`}
             </CardTitle>
-            <CardDescription className="max-w-4xl text-base leading-7">{result.summary}</CardDescription>
+            <CardDescription className="max-w-4xl text-base leading-7">{report?.executiveSummary || result.summary}</CardDescription>
           </div>
           <ExportButtons onExport={onExport} />
         </div>
@@ -317,6 +318,8 @@ function ReportDashboard({ result, onExport }: { result: AnalysisResponse; onExp
           <MetricCard label="评论" value={result.totals.comments} icon={<MessageCircle className="size-4" />} />
           <MetricCard label="有效样本" value={result.totals.validSamples} icon={<Database className="size-4" />} />
         </div>
+
+        {report && <ReportInsights report={report} />}
 
         {result.warnings.length > 0 && (
           <Alert>
@@ -378,6 +381,51 @@ function ReportDashboard({ result, onExport }: { result: AnalysisResponse; onExp
         </Tabs>
       </CardContent>
     </Card>
+  );
+}
+
+function ReportInsights({ report }: { report: AnalysisResponse["report"] }) {
+  return (
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+      <Card className="shadow-none">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Lightbulb className="size-5 text-primary" />
+            关键发现
+          </CardTitle>
+          <CardDescription>{report.dataQuality.message}</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 md:grid-cols-2">
+          {report.keyFindings.map((item) => (
+            <article key={`${item.title}-${item.detail}`} className="rounded-lg border bg-background/70 p-4">
+              <Badge variant="outline" className={insightBadgeClass(item.tone)}>
+                {item.title}
+              </Badge>
+              <p className="mt-3 text-sm leading-6">{item.detail}</p>
+            </article>
+          ))}
+        </CardContent>
+      </Card>
+      <Card className="shadow-none">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <CheckCircle2 className="size-5 text-primary" />
+            建议动作
+          </CardTitle>
+          <CardDescription>按当前样本直接生成，适合阶段性复盘。</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ol className="grid gap-3">
+            {report.recommendedActions.map((action, index) => (
+              <li key={action} className="rounded-lg border bg-background/70 p-3 text-sm leading-6">
+                <span className="mr-2 font-semibold text-primary">{index + 1}.</span>
+                {action}
+              </li>
+            ))}
+          </ol>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
@@ -567,6 +615,19 @@ function MetricCard({ label, value, icon }: { label: string; value: number; icon
   );
 }
 
+function insightBadgeClass(tone: AnalysisResponse["insights"][number]["tone"]) {
+  if (tone === "positive") {
+    return LABEL_META.positive.badgeClass;
+  }
+  if (tone === "negative") {
+    return LABEL_META.negative.badgeClass;
+  }
+  if (tone === "neutral") {
+    return LABEL_META.neutral.badgeClass;
+  }
+  return "bg-blue-100 text-blue-800 border-blue-200";
+}
+
 function isAnalysisResponse(value: Partial<AnalysisResponse>): value is AnalysisResponse {
   return Boolean(value && value.distribution && value.totals && value.labeledSamples);
 }
@@ -617,9 +678,23 @@ function buildMarkdown(result: AnalysisResponse): string {
   const sampleRows = result.samples
     .map((sample) => `- **${LABEL_META[sample.label].name}** (${Math.round(sample.confidence * 100)}%): ${sample.text}`)
     .join("\n");
-  return `# ${result.keyword} 舆情情绪报告
+  const findingRows = (result.report?.keyFindings || result.insights || [])
+    .map((item) => `- **${item.title}**：${item.detail}`)
+    .join("\n");
+  const actionRows = (result.report?.recommendedActions || [])
+    .map((action, index) => `${index + 1}. ${action}`)
+    .join("\n");
+  return `# ${result.report?.headline || `${result.keyword} 舆情情绪报告`}
 
-${result.summary}
+${result.report?.executiveSummary || result.summary}
+
+## 关键发现
+
+${findingRows || "暂无关键发现"}
+
+## 建议动作
+
+${actionRows || "暂无建议动作"}
 
 ## 情绪分布
 
@@ -637,6 +712,7 @@ ${sampleRows || "暂无样本"}
 - 帖子数：${result.totals.posts}
 - 评论数：${result.totals.comments}
 - 模式：${result.sourceMode}
+- 数据质量：${result.report?.dataQuality.message || "未提供"}
 - 警告：${result.warnings.join("；") || "无"}
 `;
 }

@@ -80,6 +80,23 @@ export interface AnalysisExportInfo {
   markdownFilename: string;
 }
 
+export interface AnalysisInsight {
+  title: string;
+  detail: string;
+  tone: "positive" | "neutral" | "negative" | "info";
+}
+
+export interface AnalysisReport {
+  headline: string;
+  executiveSummary: string;
+  keyFindings: AnalysisInsight[];
+  recommendedActions: string[];
+  dataQuality: {
+    level: "good" | "limited" | "weak";
+    message: string;
+  };
+}
+
 export interface AnalysisResponse {
   keyword: string;
   engine: AnalysisEngine;
@@ -91,6 +108,8 @@ export interface AnalysisResponse {
   samples: LabeledSample[];
   warnings: string[];
   summary: string;
+  insights: AnalysisInsight[];
+  report: AnalysisReport;
   diagnostics?: AnalysisDiagnostics;
   exports: AnalysisExportInfo;
   sourceMode: "fixture" | "client";
