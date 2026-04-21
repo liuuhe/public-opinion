@@ -22,10 +22,6 @@
 
   const originalFetch = window.fetch;
   window.fetch = async (...args) => {
-    const requestUrl = String(args[0]?.url || args[0] || "");
-    if (requestUrl && !/^https?:\/\//i.test(requestUrl) && !requestUrl.startsWith("/")) {
-      return originalFetch(...args);
-    }
     const response = await originalFetch(...args);
     try {
       const clone = response.clone();

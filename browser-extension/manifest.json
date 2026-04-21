@@ -7,10 +7,7 @@
     "default_popup": "popup.html",
     "default_title": "Opinion Capture"
   },
-  "permissions": ["activeTab", "storage", "scripting", "tabs"],
-  "background": {
-    "service_worker": "background.js"
-  },
+  "permissions": ["activeTab", "storage", "scripting"],
   "host_permissions": [
     "https://www.xiaohongshu.com/*",
     "https://*.xiaohongshu.com/*",
@@ -22,7 +19,7 @@
     {
       "matches": ["https://www.xiaohongshu.com/*"],
       "js": ["content.js"],
-      "run_at": "document_idle"
+      "run_at": "document_start"
     }
   ],
   "web_accessible_resources": [

@@ -20,7 +20,6 @@ import { crawlKeyword } from "./xiaohongshu";
 const DEFAULT_MAX_POSTS = 10;
 const DEFAULT_COMMENTS_PER_POST = 20;
 const BROWSER_COOLDOWN_KEY = "browser:rate-limit:cooldown";
-const SAVED_REPORT_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 type StageReporter = (event: AnalysisStreamEvent) => void | Promise<void>;
 
@@ -236,8 +235,7 @@ export async function analyzeKeyword(
 
 export async function analyzeClientCapture(
   env: Env,
-  request: ClientCapturedAnalyzeRequest,
-  origin = ""
+  request: ClientCapturedAnalyzeRequest
 ): Promise<AnalysisResponse> {
   const keyword = normalizeKeyword(request.keyword);
   const engine = normalizeEngine(request.engine);
@@ -262,7 +260,7 @@ export async function analyzeClientCapture(
   });
 
   const diagnostics: AnalysisDiagnostics = {
-    pageUrl: trimString(request.pageUrl || request.sourcePageUrl, 500),
+    pageUrl: trimString(request.pageUrl, 500),
     extractedLinkCount: posts.length,
     commentCountsByPost: Object.fromEntries(posts.map((post) => [post.postId, post.comments.length])),
     advice:
@@ -286,7 +284,7 @@ export async function analyzeClientCapture(
     warnings
   });
 
-  const response = buildAnalysisResponse({
+  return buildAnalysisResponse({
     keyword,
     engine,
     capturedAt: new Date().toISOString(),
@@ -296,34 +294,6 @@ export async function analyzeClientCapture(
     diagnostics,
     sourceMode: "client"
   });
-
-  if (request.persistReport) {
-    response.savedReport = await saveAnalysisReport(env, response, origin);
-    await env.PUBLIC_OPINION_KV.put(`report:v1:${response.savedReport.id}`, JSON.stringify(response), {
-      expirationTtl: SAVED_REPORT_TTL_SECONDS
-    });
-  }
-
-  return response;
-}
-
-export async function getSavedAnalysisReport(env: Env, reportId: string): Promise<AnalysisResponse> {
-  const normalizedId = reportId.trim();
-  if (!/^[a-z0-9-]{12,80}$/i.test(normalizedId)) {
-    throw new ApiError(400, "报告 ID 格式不正确");
-  }
-
-  const value = await env.PUBLIC_OPINION_KV.get(`report:v1:${normalizedId}`);
-  if (!value) {
-    throw new ApiError(404, "报告不存在或已过期");
-  }
-
-  try {
-    return JSON.parse(value) as AnalysisResponse;
-  } catch {
-    await env.PUBLIC_OPINION_KV.delete(`report:v1:${normalizedId}`).catch(() => undefined);
-    throw new ApiError(404, "报告不存在或已过期");
-  }
 }
 
 export function streamAnalyzeKeyword(env: Env, url: URL): Response {
@@ -609,15 +579,4 @@ function trimString(value: unknown, maxLength: number): string {
 function extractPostId(url: string): string {
   const match = url.match(/\/(?:explore|discovery\/item)\/([^/?#]+)/);
   return match?.[1] || "";
-}
-
-async function saveAnalysisReport(env: Env, response: AnalysisResponse, origin: string) {
-  const id = crypto.randomUUID();
-  const expiresAt = new Date(Date.now() + SAVED_REPORT_TTL_SECONDS * 1000).toISOString();
-  const baseUrl = origin || "https://public-opinion-cloudflare.liuuhe.workers.dev";
-  return {
-    id,
-    url: `${baseUrl.replace(/\/+$/, "")}/?report=${encodeURIComponent(id)}`,
-    expiresAt
-  };
 }

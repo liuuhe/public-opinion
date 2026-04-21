@@ -7,20 +7,16 @@ const elements = {
   commentsPerPost: document.querySelector("#commentsPerPost"),
   engine: document.querySelector("#engine"),
   captureBtn: document.querySelector("#captureBtn"),
-  autoCaptureBtn: document.querySelector("#autoCaptureBtn"),
   analyzeBtn: document.querySelector("#analyzeBtn"),
   status: document.querySelector("#status"),
   result: document.querySelector("#result")
 };
 
 let currentCapture = null;
-let statusTimer = null;
 
 loadSettings();
-void refreshAutoStatus();
 
 elements.captureBtn.addEventListener("click", () => void captureCurrentTab());
-elements.autoCaptureBtn.addEventListener("click", () => void startAutoCapture());
 elements.analyzeBtn.addEventListener("click", () => void analyzeCapture());
 
 for (const key of ["workerUrl", "keyword", "maxPosts", "commentsPerPost", "engine"]) {
@@ -32,7 +28,7 @@ async function loadSettings() {
     workerUrl: DEFAULT_WORKER_URL,
     keyword: "",
     maxPosts: 10,
-    commentsPerPost: 20,
+    commentsPerPost: 30,
     engine: "llm"
   });
   elements.workerUrl.value = saved.workerUrl;
@@ -47,7 +43,7 @@ function saveSettings() {
     workerUrl: elements.workerUrl.value.trim() || DEFAULT_WORKER_URL,
     keyword: elements.keyword.value.trim(),
     maxPosts: Number(elements.maxPosts.value) || 10,
-    commentsPerPost: Number(elements.commentsPerPost.value) || 20,
+    commentsPerPost: Number(elements.commentsPerPost.value) || 30,
     engine: elements.engine.value
   });
 }
@@ -88,43 +84,6 @@ async function captureCurrentTab() {
   );
 }
 
-async function startAutoCapture() {
-  saveSettings();
-  setStatus("正在启动自动逐帖采集...");
-  elements.autoCaptureBtn.disabled = true;
-  elements.captureBtn.disabled = true;
-  elements.analyzeBtn.disabled = true;
-  elements.result.hidden = true;
-
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id || !/^https:\/\/www\.xiaohongshu\.com\//.test(tab.url || "")) {
-    setStatus("请先切换到已登录的小红书搜索页。");
-    elements.autoCaptureBtn.disabled = false;
-    elements.captureBtn.disabled = false;
-    return;
-  }
-
-  const response = await chrome.runtime.sendMessage({
-    type: "XHS_AUTO_CAPTURE_START",
-    options: {
-      activeTabId: tab.id,
-      workerUrl: elements.workerUrl.value.trim() || DEFAULT_WORKER_URL,
-      keyword: decodeText(elements.keyword.value.trim()),
-      maxPosts: Number(elements.maxPosts.value) || 10,
-      commentsPerPost: Number(elements.commentsPerPost.value) || 20,
-      engine: elements.engine.value
-    }
-  });
-  if (!response?.ok) {
-    setStatus(response?.error || "自动采集启动失败。");
-    elements.autoCaptureBtn.disabled = false;
-    elements.captureBtn.disabled = false;
-    return;
-  }
-  renderAutoStatus(response.status);
-  startStatusPolling();
-}
-
 async function analyzeCapture() {
   if (!currentCapture) {
     setStatus("请先采集当前页。");
@@ -144,7 +103,7 @@ async function analyzeCapture() {
         keyword,
         engine: elements.engine.value,
         maxPosts: Number(elements.maxPosts.value) || 10,
-        commentsPerPost: Number(elements.commentsPerPost.value) || 20,
+        commentsPerPost: Number(elements.commentsPerPost.value) || 30,
         pageUrl: currentCapture.pageUrl,
         posts: currentCapture.posts
       })
@@ -172,16 +131,12 @@ function renderResult(result) {
     metric("评论", result.totals?.comments ?? 0),
     metric("正向", distribution.positive?.count ?? 0),
     metric("中性", distribution.neutral?.count ?? 0),
-    metric("负向", distribution.negative?.count ?? 0),
-    result.savedReport?.url
-      ? metric("完整报告", `<a href="${escapeHtml(result.savedReport.url)}" target="_blank">打开网页报告</a>`, true)
-      : ""
+    metric("负向", distribution.negative?.count ?? 0)
   ].join("");
 }
 
-function metric(label, value, html = false) {
-  const safeValue = html ? String(value) : escapeHtml(String(value));
-  return `<div class="metric"><strong>${escapeHtml(label)}</strong><span>${safeValue}</span></div>`;
+function metric(label, value) {
+  return `<div class="metric"><strong>${escapeHtml(label)}</strong><span>${escapeHtml(String(value))}</span></div>`;
 }
 
 function setStatus(message) {
@@ -212,54 +167,4 @@ function decodeText(value) {
     }
   }
   return decoded.trim();
-}
-
-function startStatusPolling() {
-  if (statusTimer) {
-    clearInterval(statusTimer);
-  }
-  statusTimer = setInterval(() => void refreshAutoStatus(), 1000);
-}
-
-async function refreshAutoStatus() {
-  try {
-    const response = await chrome.runtime.sendMessage({ type: "XHS_AUTO_CAPTURE_STATUS" });
-    if (response?.ok) {
-      renderAutoStatus(response.status);
-    }
-  } catch {
-    // Background service worker may still be waking up.
-  }
-}
-
-function renderAutoStatus(status) {
-  if (!status || status.phase === "idle") {
-    elements.autoCaptureBtn.disabled = false;
-    elements.captureBtn.disabled = false;
-    return;
-  }
-
-  const lines = [
-    status.message,
-    status.discoveredPosts ? `发现帖子：${status.discoveredPosts}` : "",
-    status.currentIndex ? `当前进度：${status.currentIndex}/${status.discoveredPosts || status.targetPosts}` : "",
-    `已采集：${status.capturedPosts || 0} 篇 / ${status.capturedComments || 0} 条评论`,
-    status.warnings?.length ? `提示：${status.warnings.at(-1)}` : "",
-    status.error ? `错误：${status.error}` : ""
-  ].filter(Boolean);
-  setStatus(lines.join("\n"));
-
-  if (status.result) {
-    renderResult(status.result);
-  }
-
-  const running = Boolean(status.running);
-  elements.autoCaptureBtn.disabled = running;
-  elements.captureBtn.disabled = running;
-  elements.analyzeBtn.disabled = running || !currentCapture || currentCapture.totals.comments === 0;
-
-  if (!running && statusTimer) {
-    clearInterval(statusTimer);
-    statusTimer = null;
-  }
 }

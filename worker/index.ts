@@ -1,5 +1,5 @@
 import type { AnalyzeRequest, ClientCapturedAnalyzeRequest, RemoteLoginActionRequest } from "../src/shared/types";
-import { analyzeClientCapture, analyzeKeyword, getSavedAnalysisReport, streamAnalyzeKeyword } from "./analyze";
+import { analyzeClientCapture, analyzeKeyword, streamAnalyzeKeyword } from "./analyze";
 import { ApiError, type Env } from "./env";
 import { errorResponse, jsonResponse, optionsResponse } from "./http";
 import { handleRemoteLoginAction, streamRemoteLogin } from "./login";
@@ -42,16 +42,7 @@ export default {
     if (url.pathname === "/api/analyze/captured" && request.method === "POST") {
       try {
         const body = (await parseJsonBody(request)) as ClientCapturedAnalyzeRequest;
-        return jsonResponse(await analyzeClientCapture(env, body, url.origin));
-      } catch (error) {
-        return errorResponse(error);
-      }
-    }
-
-    if (url.pathname.startsWith("/api/reports/") && request.method === "GET") {
-      try {
-        const reportId = decodeURIComponent(url.pathname.replace(/^\/api\/reports\//, ""));
-        return jsonResponse(await getSavedAnalysisReport(env, reportId));
+        return jsonResponse(await analyzeClientCapture(env, body));
       } catch (error) {
         return errorResponse(error);
       }
