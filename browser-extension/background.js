@@ -173,7 +173,6 @@ async function discoverCandidates(activeTabId, minPosts, options = {}) {
   return sendCaptureMessage(activeTabId, {
     type: "XHS_CAPTURE_SEARCH_SCROLL_AND_GET",
     enableNetwork: true,
-    rounds: options.light ? 2 : 7,
     delayMs: options.light ? 450 : 650,
     minPosts
   });

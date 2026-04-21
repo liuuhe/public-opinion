@@ -133,16 +133,7 @@
       injectBridge();
       await delay(250);
     }
-    const rounds = Number(options.rounds || 4);
-    const delayMs = Number(options.delayMs || 700);
-    for (let index = 0; index < rounds; index += 1) {
-      window.scrollBy({ top: Math.max(700, window.innerHeight * 0.8), behavior: "smooth" });
-      await delay(delayMs);
-      const capture = buildCapture();
-      if (capture.posts.length >= Number(options.minPosts || 3)) {
-        return capture;
-      }
-    }
+    await delay(Number(options.delayMs || 500));
     return buildCapture();
   }
 
