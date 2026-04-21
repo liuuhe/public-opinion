@@ -82,6 +82,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === "XHS_AUTO_CAPTURE_EXPORT") {
+    const capture = buildLatestCaptureExport();
+    if (!capture.posts.length) {
+      sendResponse({ ok: false, status: taskStatus, error: "当前还没有可导出的采集数据。" });
+      return false;
+    }
+    sendResponse({ ok: true, status: taskStatus, capture });
+    return false;
+  }
+
   return false;
 });
 
@@ -102,6 +112,7 @@ async function runAutoCapture(options) {
   let searchCapture = null;
   let candidates = [];
   let index = 0;
+  let assignedPosts = 0;
   const candidateQueue = [];
   const queuedCandidateKeys = new Set();
   const capturedPosts = [];
@@ -177,19 +188,18 @@ async function runAutoCapture(options) {
   }
 
   async function capturePostsWorker(workerNumber) {
-    while (capturedPosts.length < targetPosts) {
+    while (assignedPosts < targetPosts) {
       if (taskCancelled) {
         throw new Error("自动采集已取消。");
       }
       await waitWhilePaused();
 
-      const candidate = await takeNextCandidate();
-      if (!candidate) {
+      const nextTask = await takeNextCandidate();
+      if (!nextTask) {
         return;
       }
+      const { candidate, postIndex } = nextTask;
 
-      const postIndex = index + 1;
-      index = postIndex;
       updateStatus({
         currentIndex: postIndex,
         discoveredPosts: Math.max(taskStatus.discoveredPosts, queuedCandidateKeys.size),
@@ -232,14 +242,18 @@ async function runAutoCapture(options) {
 
   async function takeNextCandidate() {
     return discoveryLock.run(async () => {
-      while (candidateQueue.length === 0 && capturedPosts.length < targetPosts) {
+      if (assignedPosts >= targetPosts) {
+        return null;
+      }
+
+      while (candidateQueue.length === 0 && assignedPosts < targetPosts) {
         searchCapture = await discoverCandidates(activeTabId, Math.min(targetPosts, capturedPosts.length + 3), { light: true });
         latestSearchCapture = searchCapture;
         enqueueCandidates(
           candidateQueue,
           queuedCandidateKeys,
           searchCapture?.posts || [],
-          targetPosts - capturedPosts.length - candidateQueue.length
+          targetPosts - assignedPosts - candidateQueue.length
         );
         candidates = Array.from(queuedCandidateKeys);
         if (candidateQueue.length === 0) {
@@ -255,7 +269,9 @@ async function runAutoCapture(options) {
           continue;
         }
         visitedCandidateKeys.add(candidateKey);
-        return candidate;
+        assignedPosts += 1;
+        index = assignedPosts;
+        return { candidate, postIndex: assignedPosts };
       }
       return null;
     });
@@ -292,6 +308,31 @@ async function analyzePausedCapture() {
     await chrome.tabs.create({ url: result.savedReport.url, active: true });
   }
   return { ok: true, status: taskStatus, result };
+}
+
+function buildLatestCaptureExport() {
+  const options = latestTaskOptions || {};
+  const posts = latestCapturedPosts.slice();
+  const keyword = decodeText(options.keyword || latestSearchCapture?.keywordGuess || "小红书");
+  const commentsPerPost = clampNumber(options.commentsPerPost, 20, 0, 80);
+  return {
+    ok: true,
+    source: "browser-extension",
+    keyword,
+    engine: options.engine || "llm",
+    maxPosts: clampNumber(options.maxPosts, 10, 1, 30),
+    commentsPerPost,
+    concurrency: clampNumber(options.concurrency, 2, 1, 3),
+    pageUrl: latestSearchCapture?.pageUrl || "",
+    pageTitle: latestSearchCapture?.pageTitle || "",
+    capturedAt: new Date().toISOString(),
+    networkPayloadCount: latestSearchCapture?.networkPayloadCount || 0,
+    posts,
+    totals: {
+      posts: posts.length,
+      comments: posts.reduce((sum, post) => sum + (post.comments?.length || 0), 0)
+    }
+  };
 }
 
 async function openSearchPageForKeyword(activeTabId, keyword) {
@@ -461,25 +502,74 @@ async function analyzeCapturedPosts(options, searchCapture, posts) {
     throw new Error("请先配置 Worker 地址。");
   }
 
-  const response = await fetch(`${workerUrl}/api/analyze/captured`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      keyword: decodeText(options.keyword || searchCapture?.keywordGuess || "小红书"),
-      engine: options.engine || "llm",
-      maxPosts: clampNumber(options.maxPosts, 10, 1, 30),
-      commentsPerPost: clampNumber(options.commentsPerPost, 20, 0, 80),
-      pageUrl: searchCapture?.pageUrl || "",
-      sourcePageUrl: searchCapture?.pageUrl || "",
-      persistReport: true,
-      posts
-    })
+  return postAnalysisWithRetry(workerUrl, {
+    keyword: decodeText(options.keyword || searchCapture?.keywordGuess || "小红书"),
+    engine: options.engine || "llm",
+    maxPosts: clampNumber(options.maxPosts, 10, 1, 30),
+    commentsPerPost: clampNumber(options.commentsPerPost, 20, 0, 80),
+    pageUrl: searchCapture?.pageUrl || "",
+    sourcePageUrl: searchCapture?.pageUrl || "",
+    persistReport: true,
+    posts
   });
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error([payload.error, payload.details].filter(Boolean).join("："));
+}
+
+async function postAnalysisWithRetry(workerUrl, body) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      if (attempt > 1) {
+        updateStatus({ message: "首次分析请求较慢或失败，正在自动重试一次。" });
+      }
+      return await fetchAnalysisJson(workerUrl, body, 60000);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= 2 || !isRetryableError(error)) {
+        throw error;
+      }
+      await delay(1200);
+    }
   }
-  return payload;
+  throw lastError || new Error("分析失败。");
+}
+
+async function fetchAnalysisJson(workerUrl, body, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${workerUrl}/api/analyze/captured`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify(body)
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      const error = new Error([payload.error, payload.details].filter(Boolean).join("："));
+      error.status = response.status;
+      throw error;
+    }
+    return payload;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      const timeoutError = new Error("Worker 响应超时。");
+      timeoutError.retryable = true;
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function isRetryableError(error) {
+  if (error?.retryable) {
+    return true;
+  }
+  if (error?.status && [502, 503, 504].includes(error.status)) {
+    return true;
+  }
+  return /Failed to fetch|NetworkError|timeout|超时|Worker 响应超时/i.test(String(error?.message || error));
 }
 
 async function sendCaptureMessage(tabId, message) {

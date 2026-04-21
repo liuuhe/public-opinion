@@ -1,4 +1,4 @@
-const DEFAULT_WORKER_URL = "https://public-opinion-cloudflare.liuuhe.workers.dev";
+const DEFAULT_WORKER_URL = "https://opinion.liuhe.me";
 
 const elements = {
   workerUrl: document.querySelector("#workerUrl"),
@@ -10,6 +10,7 @@ const elements = {
   captureBtn: document.querySelector("#captureBtn"),
   autoCaptureBtn: document.querySelector("#autoCaptureBtn"),
   pauseBtn: document.querySelector("#pauseBtn"),
+  exportBtn: document.querySelector("#exportBtn"),
   analyzeBtn: document.querySelector("#analyzeBtn"),
   status: document.querySelector("#status"),
   result: document.querySelector("#result")
@@ -25,6 +26,7 @@ void refreshAutoStatus();
 elements.captureBtn.addEventListener("click", () => void captureCurrentTab());
 elements.autoCaptureBtn.addEventListener("click", () => void startAutoCapture());
 elements.pauseBtn.addEventListener("click", () => void toggleAutoPause());
+elements.exportBtn.addEventListener("click", () => void exportCaptureData());
 elements.analyzeBtn.addEventListener("click", () => void analyzeCapture());
 
 for (const key of ["workerUrl", "keyword", "maxPosts", "commentsPerPost", "concurrency", "engine"]) {
@@ -90,6 +92,7 @@ async function captureCurrentTab() {
   }
 
   elements.analyzeBtn.disabled = currentCapture.totals.comments === 0;
+  elements.exportBtn.disabled = currentCapture.totals.posts === 0;
   setStatus(
     `已采集当前页。\n帖子：${currentCapture.totals.posts}\n评论：${currentCapture.totals.comments}\n网络包：${currentCapture.networkPayloadCount}\n${
       currentCapture.totals.comments === 0 ? "未采集到评论，请打开帖子详情页并滚动评论区后重试。" : "可以发送到 Worker 分析。"
@@ -103,6 +106,7 @@ async function startAutoCapture() {
   elements.autoCaptureBtn.disabled = true;
   elements.captureBtn.disabled = true;
   elements.pauseBtn.disabled = true;
+  elements.exportBtn.disabled = true;
   elements.analyzeBtn.disabled = true;
   elements.result.hidden = true;
 
@@ -112,6 +116,7 @@ async function startAutoCapture() {
     elements.autoCaptureBtn.disabled = false;
     elements.captureBtn.disabled = false;
     elements.pauseBtn.disabled = true;
+    elements.exportBtn.disabled = !hasExportableData();
     return;
   }
 
@@ -130,6 +135,7 @@ async function startAutoCapture() {
     elements.autoCaptureBtn.disabled = false;
     elements.captureBtn.disabled = false;
     elements.pauseBtn.disabled = true;
+    elements.exportBtn.disabled = !hasExportableData();
     return;
   }
   renderAutoStatus(response.status);
@@ -163,14 +169,12 @@ async function analyzeCapture() {
   const limits = readLimits();
   const capture = limitCapture(currentCapture, limits);
 
-  setStatus("正在发送到 Worker 做情绪分析...");
   elements.analyzeBtn.disabled = true;
 
   try {
-    const response = await fetch(`${workerUrl}/api/analyze/captured`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const payload = await postAnalysisWithRetry({
+      workerUrl,
+      body: {
         keyword,
         engine: elements.engine.value,
         maxPosts: limits.maxPosts,
@@ -178,12 +182,9 @@ async function analyzeCapture() {
         concurrency: limits.concurrency,
         pageUrl: capture.pageUrl,
         posts: capture.posts
-      })
+      },
+      onProgress: setStatus
     });
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error([payload.error, payload.details].filter(Boolean).join("："));
-    }
     renderResult(payload);
     setStatus("分析完成。");
   } catch (error) {
@@ -194,6 +195,11 @@ async function analyzeCapture() {
 }
 
 async function analyzePausedAutoCapture() {
+  const startedAt = Date.now();
+  const timer = setInterval(() => {
+    const elapsed = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+    setStatus(`正在发送暂停状态下已采集的帖子做分析，已等待 ${elapsed} 秒...`);
+  }, 1000);
   setStatus("正在发送暂停状态下已采集的帖子做分析...");
   elements.analyzeBtn.disabled = true;
   try {
@@ -205,8 +211,121 @@ async function analyzePausedAutoCapture() {
   } catch (error) {
     setStatus(error instanceof Error ? error.message : "阶段性分析失败。");
   } finally {
+    clearInterval(timer);
     elements.analyzeBtn.disabled = false;
   }
+}
+
+async function exportCaptureData() {
+  try {
+    const autoCapture = await getAutoCaptureForExport();
+    const capture = autoCapture || buildCurrentCaptureExport();
+    if (!capture?.posts?.length) {
+      setStatus("当前没有可导出的采集数据，请先采集。");
+      return;
+    }
+    const filename = `xhs-opinion-${safeFilename(capture.keyword || "小红书")}-${formatTimestamp(new Date())}-capture.json`;
+    downloadJson(capture, filename);
+    setStatus(`已导出 ${capture.posts.length} 篇帖子、${capture.totals?.comments || 0} 条评论。`);
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : "导出失败。");
+  }
+}
+
+async function getAutoCaptureForExport() {
+  if (!lastAutoStatus || (lastAutoStatus.capturedPosts || 0) <= 0) {
+    return null;
+  }
+  const response = await chrome.runtime.sendMessage({ type: "XHS_AUTO_CAPTURE_EXPORT" });
+  return response?.ok ? response.capture : null;
+}
+
+function buildCurrentCaptureExport() {
+  if (!currentCapture) {
+    return null;
+  }
+  const limits = readLimits();
+  const capture = limitCapture(currentCapture, limits);
+  return {
+    ok: true,
+    source: "browser-extension",
+    keyword: decodeText(elements.keyword.value.trim() || capture.keywordGuess || "小红书"),
+    engine: elements.engine.value,
+    maxPosts: limits.maxPosts,
+    commentsPerPost: limits.commentsPerPost,
+    concurrency: limits.concurrency,
+    pageUrl: capture.pageUrl,
+    pageTitle: capture.pageTitle,
+    capturedAt: new Date().toISOString(),
+    networkPayloadCount: capture.networkPayloadCount || 0,
+    posts: capture.posts,
+    totals: capture.totals
+  };
+}
+
+async function postAnalysisWithRetry({ workerUrl, body, onProgress }) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      const elapsed = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+      const prefix = attempt === 1 ? "正在唤醒 Worker 并分析" : "正在重试分析";
+      onProgress(`${prefix}，已等待 ${elapsed} 秒...`);
+    }, 1000);
+
+    try {
+      onProgress(attempt === 1 ? "正在唤醒 Worker 并发送分析..." : "首次请求较慢或失败，正在自动重试一次...");
+      return await fetchAnalysisJson(workerUrl, body, 60000);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= 2 || !isRetryableError(error)) {
+        throw error;
+      }
+      await delay(1200);
+    } finally {
+      clearInterval(timer);
+    }
+  }
+  throw lastError || new Error("分析失败。");
+}
+
+async function fetchAnalysisJson(workerUrl, body, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${workerUrl}/api/analyze/captured`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify(body)
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      const error = new Error([payload.error, payload.details].filter(Boolean).join("："));
+      error.status = response.status;
+      throw error;
+    }
+    return payload;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      const timeoutError = new Error("Worker 响应超时。");
+      timeoutError.retryable = true;
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function isRetryableError(error) {
+  if (error?.retryable) {
+    return true;
+  }
+  if (error?.status && [502, 503, 504].includes(error.status)) {
+    return true;
+  }
+  return /Failed to fetch|NetworkError|timeout|超时|Worker 响应超时/i.test(String(error?.message || error));
 }
 
 function renderResult(result) {
@@ -245,6 +364,10 @@ function renderListMetric(label, items) {
     `<ul>${items.slice(0, 4).map((item) => `<li>${escapeHtml(String(item))}</li>`).join("")}</ul>`,
     true
   );
+}
+
+function hasExportableData() {
+  return Boolean((currentCapture?.totals?.posts || 0) > 0 || (lastAutoStatus?.capturedPosts || 0) > 0);
 }
 
 function setStatus(message) {
@@ -292,6 +415,33 @@ function escapeHtml(value) {
   })[char]);
 }
 
+function downloadJson(payload, filename) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function safeFilename(value) {
+  return String(value || "keyword").replace(/[\\/:*?"<>|\s]+/g, "-").slice(0, 40) || "keyword";
+}
+
+function formatTimestamp(date) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+    "-",
+    pad(date.getHours()),
+    pad(date.getMinutes()),
+    pad(date.getSeconds())
+  ].join("");
+}
+
 function decodeText(value) {
   let decoded = String(value || "");
   for (let index = 0; index < 2; index += 1) {
@@ -332,6 +482,7 @@ function renderAutoStatus(status) {
     elements.autoCaptureBtn.disabled = false;
     elements.captureBtn.disabled = false;
     elements.pauseBtn.disabled = true;
+    elements.exportBtn.disabled = !hasExportableData();
     elements.pauseBtn.textContent = "暂停";
     return;
   }
@@ -354,6 +505,7 @@ function renderAutoStatus(status) {
   elements.autoCaptureBtn.disabled = running;
   elements.captureBtn.disabled = running;
   elements.pauseBtn.disabled = !running;
+  elements.exportBtn.disabled = !hasExportableData();
   elements.pauseBtn.textContent = status.paused ? "继续" : "暂停";
   elements.analyzeBtn.disabled = running
     ? !(status.paused && (status.capturedPosts || 0) > 0)
@@ -363,6 +515,11 @@ function renderAutoStatus(status) {
     clearInterval(statusTimer);
     statusTimer = null;
     elements.pauseBtn.disabled = true;
+    elements.exportBtn.disabled = !hasExportableData();
     elements.pauseBtn.textContent = "暂停";
   }
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

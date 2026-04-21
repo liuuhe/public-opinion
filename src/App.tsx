@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type DragEvent } from "react";
 import { AlertCircle, BarChart3, CheckCircle2, Database, Download, FileJson, FileText, Lightbulb, MessageCircle, Radar, Upload } from "lucide-react";
 import { Bar, BarChart, Cell, Pie, PieChart, Tooltip, XAxis, YAxis } from "recharts";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -15,7 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { AnalysisEngine, AnalysisResponse, ClientCapturedAnalyzeRequest, LabeledSample, SentimentBucket, SentimentLabel } from "./shared/types";
 
-const DEFAULT_WORKER_URL = "https://public-opinion-cloudflare.liuuhe.workers.dev";
+const DEFAULT_WORKER_URL = "https://opinion.liuhe.me";
 
 const LABEL_META: Record<SentimentLabel, { name: string; description: string; color: string; badgeClass: string }> = {
   positive: {
@@ -49,14 +49,20 @@ function App() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  const collectCommand = `python -m app collect --keyword "${keyword}" --posts ${maxPosts} --comments ${commentsPerPost} --worker-url ${workerUrl} --engine ${engine}`;
-
   async function handleFileUpload(file: File | undefined) {
     if (!file) {
       return;
     }
     setJsonText(await file.text());
     setError("");
+  }
+
+  async function handleJsonDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const file = event.dataTransfer.files?.[0];
+    if (file) {
+      await handleFileUpload(file);
+    }
   }
 
   async function analyzeJson() {
@@ -147,9 +153,9 @@ function App() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Radar className="size-5 text-primary" />
-              本地 Playwright 采集
+              插件采集工作台
             </CardTitle>
-            <CardDescription>登录、搜索、打开帖子和采集评论都在本机浏览器完成；Cloudflare 只负责情绪分析和报告展示。</CardDescription>
+            <CardDescription>用浏览器插件在已登录的小红书页面采集评论，再交给 Worker 生成摘要、洞察和完整报告。</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -170,25 +176,25 @@ function App() {
             <div className="rounded-xl border bg-muted/30 p-4">
               <p className="text-sm font-medium">推荐流程</p>
               <ol className="text-muted-foreground mt-2 grid gap-1 text-sm leading-6">
-                <li>1. 首次运行：<code>python -m app login</code></li>
-                <li>2. 采集并分析：运行下面命令</li>
-                <li>3. 把生成的 <code>data/reports/*-analysis.json</code> 上传到右侧查看报告</li>
+                <li>1. 在浏览器扩展页重新加载 <code>browser-extension</code>。</li>
+                <li>2. 打开已登录的小红书页面，填写关键词、帖子数、每帖评论和并发数。</li>
+                <li>3. 点击插件里的“自动逐帖”，完成后可直接发送分析或导出 JSON。</li>
+                <li>4. 把插件导出的 capture JSON 拖到右侧，网页会生成可导出的报告。</li>
               </ol>
-              <pre className="mt-3 overflow-x-auto rounded-lg bg-background p-3 text-xs">{collectCommand}</pre>
             </div>
             <Button variant="outline" type="button" onClick={() => void loadFixture()} disabled={isLoading}>
-              加载本地 fixture 演示报告
+              加载演示报告
             </Button>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card onDragOver={(event) => event.preventDefault()} onDrop={(event) => void handleJsonDrop(event)}>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Upload className="size-5 text-primary" />
-              上传采集结果
+              导入插件数据
             </CardTitle>
-            <CardDescription>支持本地采集器生成的 capture JSON，或 Worker 返回的 analysis JSON。</CardDescription>
+            <CardDescription>支持插件导出的 capture JSON，也支持 Worker 返回的 analysis JSON。可选择文件、拖拽文件或直接粘贴。</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4">
             <Input type="file" accept="application/json,.json" onChange={(event) => void handleFileUpload(event.target.files?.[0])} />
@@ -196,7 +202,7 @@ function App() {
               className="border-input bg-background min-h-64 rounded-md border p-3 text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
               value={jsonText}
               onChange={(event) => setJsonText(event.target.value)}
-              placeholder="也可以直接粘贴 data/captures 或 data/reports 中的 JSON..."
+              placeholder="粘贴插件导出的 xhs-opinion-*-capture.json，或完整 analysis JSON..."
             />
             <Button type="button" onClick={() => void analyzeJson()} disabled={isLoading || !jsonText.trim()}>
               {isLoading ? "处理中..." : "生成/查看报告"}
@@ -229,16 +235,16 @@ function HeroCard() {
             Xiaohongshu Opinion Radar
           </Badge>
           <CardTitle className="text-2xl leading-tight tracking-[-0.04em] md:text-3xl">
-            本机稳定采集，云端生成情绪报告。
+            插件采集评论，云端生成小红书舆情报告。
           </CardTitle>
           <CardDescription className="mt-3 max-w-3xl text-sm leading-6">
-            Playwright 在本机复用真实登录态完成搜索和评论采集；Cloudflare Worker 接收结构化 JSON，调用 LLM/BERT 推理并生成可导出的舆情报告。
+            浏览器插件复用真实登录态提取帖子和评论，Cloudflare Worker 负责情绪标注、摘要、关键发现和建议动作。导出的 JSON 可以在这里复盘、二次分析和归档。
           </CardDescription>
         </div>
         <div className="grid gap-2 sm:grid-cols-3 md:grid-cols-1">
-          <MetricPill label="采集" value="本地 Playwright" />
-          <MetricPill label="分析" value="Cloudflare Worker" />
-          <MetricPill label="展示" value="网页报告" />
+          <MetricPill label="采集" value="浏览器插件" />
+          <MetricPill label="分析" value="远程 Worker" />
+          <MetricPill label="沉淀" value="JSON / CSV / Markdown" />
         </div>
       </CardContent>
     </Card>
@@ -268,7 +274,7 @@ function EmptyReportPreview() {
     <Card>
       <CardHeader>
         <CardTitle>报告预览</CardTitle>
-        <CardDescription>上传采集 JSON 或加载 fixture 后，这里会展示情绪分布、样本评论和帖子来源。</CardDescription>
+        <CardDescription>导入插件 JSON 后，这里会展示摘要、关键发现、情绪分布、样本评论和帖子来源。</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4 md:grid-cols-3">
         <Skeleton className="h-32" />
@@ -300,7 +306,7 @@ function ReportDashboard({ result, onExport }: { result: AnalysisResponse; onExp
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="space-y-3">
             <div className="flex flex-wrap gap-2">
-              <Badge>{result.sourceMode === "fixture" ? "fixture 演示" : "本地采集"}</Badge>
+              <Badge>{result.sourceMode === "fixture" ? "fixture 演示" : "插件采集"}</Badge>
               <Badge variant="outline">{result.engine.toUpperCase()}</Badge>
               <Badge variant="outline">{new Date(result.capturedAt).toLocaleString("zh-CN")}</Badge>
             </div>

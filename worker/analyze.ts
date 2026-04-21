@@ -23,8 +23,8 @@ export async function analyzeFixtureRequest(
   if (!fixtureEnabled(env)) {
     throw new ApiError(
       410,
-      "线上抓取已迁移到本地 Playwright",
-      "请运行 `python -m app collect --keyword 关键词 --worker-url <Worker地址>`，或向 `/api/analyze/captured` 上传本地采集 JSON。",
+      "线上抓取已迁移到浏览器插件",
+      "请使用浏览器插件采集评论并导出 JSON，或向 `/api/analyze/captured` 上传插件采集 JSON。",
       "unknown"
     );
   }
