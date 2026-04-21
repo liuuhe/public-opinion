@@ -42,6 +42,19 @@
       });
       return true;
     }
+    if (message?.type === "XHS_CAPTURE_CLICK_AND_GET") {
+      clickPostAndCapture(message).then(sendResponse).catch((error) => {
+        sendResponse({
+          ok: false,
+          pageUrl: location.href,
+          pageTitle: document.title,
+          error: error instanceof Error ? error.message : String(error),
+          posts: [],
+          totals: { posts: 0, comments: 0 }
+        });
+      });
+      return true;
+    }
     return false;
   });
 
@@ -90,6 +103,34 @@
       comments: capture.posts.reduce((sum, post) => sum + post.comments.length, 0)
     };
     return capture;
+  }
+
+  async function clickPostAndCapture(options) {
+    const candidate = options.candidate || {};
+    const startUrl = location.href;
+    const anchor = findPostAnchor(candidate);
+    if (!anchor) {
+      throw new Error(`没有在当前搜索页找到帖子卡片：${candidate.postId || candidate.url || ""}`);
+    }
+
+    anchor.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+    await delay(450);
+    anchor.removeAttribute("target");
+    anchor.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+    anchor.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+    anchor.click();
+
+    await waitForPostOpen(candidate, startUrl, 8000);
+    await delay(900);
+    const capture = await scrollAndCapture(options);
+    const postId = getPostIdFromUrl(location.href) || candidate.postId || getPostIdFromUrl(candidate.url || "");
+    const bestPost = pickBestPost(capture.posts || [], postId);
+    await returnToSearchPage(startUrl);
+
+    return {
+      ...capture,
+      posts: bestPost ? [bestPost] : capture.posts
+    };
   }
 
   function extractDomPosts() {
@@ -278,6 +319,71 @@
       existing.comments = dedupeComments([...(existing.comments || []), ...(post.comments || [])]);
     }
     return Array.from(merged.values()).slice(0, 30);
+  }
+
+  function findPostAnchor(candidate) {
+    const postId = String(candidate.postId || getPostIdFromUrl(candidate.url || "") || "");
+    const targetUrl = String(candidate.url || "");
+    const anchors = Array.from(document.querySelectorAll("a[href]"))
+      .map((anchor) => {
+        const href = new URL(anchor.getAttribute("href"), location.href).href;
+        const rect = anchor.getBoundingClientRect();
+        return { anchor, href, rect };
+      })
+      .filter(({ href, rect }) => {
+        if (!postId && !targetUrl) {
+          return false;
+        }
+        return rect.width > 0 && rect.height > 0 && (href.includes(postId) || href === targetUrl);
+      })
+      .sort((left, right) => scorePostAnchor(right) - scorePostAnchor(left));
+    return anchors[0]?.anchor || null;
+  }
+
+  function scorePostAnchor(item) {
+    let score = 0;
+    if (item.href.includes("xsec_token")) {
+      score += 20;
+    }
+    score += Math.min(20, Math.round(item.rect.width / 20));
+    score += Math.min(20, Math.round(item.rect.height / 20));
+    return score;
+  }
+
+  function pickBestPost(posts, postId) {
+    const exact = posts.find((post) => post.postId === postId);
+    if (exact) {
+      return exact;
+    }
+    return posts
+      .filter((post) => (post.comments || []).length > 0)
+      .sort((left, right) => (right.comments?.length || 0) - (left.comments?.length || 0))[0] || posts[0] || null;
+  }
+
+  async function waitForPostOpen(candidate, startUrl, timeoutMs) {
+    const postId = String(candidate.postId || getPostIdFromUrl(candidate.url || "") || "");
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const currentPostId = getPostIdFromUrl(location.href);
+      const hasComments = document.body?.innerText?.includes("评论") || document.querySelector("[class*='comment']");
+      if ((currentPostId && (!postId || currentPostId === postId)) || (location.href !== startUrl && hasComments)) {
+        return;
+      }
+      await delay(250);
+    }
+  }
+
+  async function returnToSearchPage(startUrl) {
+    if (location.href !== startUrl) {
+      history.back();
+      await delay(900);
+      return;
+    }
+    document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape", code: "Escape" }));
+    const closeNode = Array.from(document.querySelectorAll("button, div, span"))
+      .find((node) => /关闭|返回|×|Close/i.test(cleanText(node.textContent || "")));
+    closeNode?.click?.();
+    await delay(500);
   }
 
   function dedupeComments(comments) {

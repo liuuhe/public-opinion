@@ -52,7 +52,6 @@ async function runAutoCapture(options) {
     targetPosts: clampNumber(options.maxPosts, 10, 1, 30)
   });
 
-  let workerTabId = null;
   try {
     const activeTabId = Number(options.activeTabId);
     if (!activeTabId) {
@@ -86,21 +85,9 @@ async function runAutoCapture(options) {
         message: `正在采集第 ${index + 1}/${candidates.length} 篇：${candidate.title || candidate.url}`
       });
 
-      workerTabId = await openOrReuseWorkerTab(workerTabId, candidate.url);
-      await waitForTabComplete(workerTabId, 12000);
-      await delay(1000);
-      const openedTab = await chrome.tabs.get(workerTabId);
-      if (isXhsSecurityRedirect(openedTab.url || "")) {
-        taskStatus.warnings.push(`第 ${index + 1} 篇被小红书安全跳转拦截：${candidate.url}`);
-        updateStatus({
-          message: `第 ${index + 1}/${candidates.length} 篇被安全跳转拦截，已跳过。`,
-          warnings: taskStatus.warnings
-        });
-        continue;
-      }
-
-      const capture = await sendCaptureMessage(workerTabId, {
-        type: "XHS_CAPTURE_SCROLL_AND_GET",
+      const capture = await sendCaptureMessage(activeTabId, {
+        type: "XHS_CAPTURE_CLICK_AND_GET",
+        candidate,
         maxComments: clampNumber(options.commentsPerPost, 20, 0, 80),
         scrollRounds: 3,
         scrollDelayMs: 550
@@ -155,9 +142,7 @@ async function runAutoCapture(options) {
       error: error instanceof Error ? error.message : String(error)
     });
   } finally {
-    if (workerTabId) {
-      await chrome.tabs.remove(workerTabId).catch(() => undefined);
-    }
+    // The active Xiaohongshu tab is intentionally kept open for the user.
   }
 }
 
@@ -186,26 +171,6 @@ async function analyzeCapturedPosts(options, searchCapture, posts) {
     throw new Error([payload.error, payload.details].filter(Boolean).join("："));
   }
   return payload;
-}
-
-async function openOrReuseWorkerTab(tabId, url) {
-  if (tabId) {
-    await chrome.tabs.update(tabId, { url, active: false });
-    return tabId;
-  }
-  const tab = await chrome.tabs.create({ url, active: false });
-  return tab.id;
-}
-
-async function waitForTabComplete(tabId, timeoutMs) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const tab = await chrome.tabs.get(tabId);
-    if (tab.status === "complete") {
-      return;
-    }
-    await delay(400);
-  }
 }
 
 async function sendCaptureMessage(tabId, message) {
@@ -242,10 +207,6 @@ function dedupePosts(posts) {
     results.push(post);
   }
   return results;
-}
-
-function isXhsSecurityRedirect(url) {
-  return /xiaohongshu\.com\/404\/sec_/i.test(String(url || ""));
 }
 
 function updateStatus(patch) {
