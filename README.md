@@ -10,6 +10,26 @@
 
 ## Quick Start
 
+### Browser extension path
+
+如果只是演示和采集，优先使用浏览器插件，启动负担最小：
+
+1. 打开 Chrome/Edge 扩展管理页，启用开发者模式。
+2. 选择“加载已解压的扩展程序”，目录选择 `browser-extension`。
+3. 在正常浏览器里登录小红书，打开搜索结果页。
+4. 点击扩展，填写 Worker 地址、关键词、帖子数和每帖评论数。
+5. 点击“自动逐帖”，扩展会优先使用带 `xsec_token` 的搜索结果链接逐帖采集并发送 Worker 分析。
+
+默认 Worker 地址：
+
+```text
+https://public-opinion-cloudflare.liuuhe.workers.dev
+```
+
+### Local Playwright path
+
+如果插件受浏览器权限或页面变动影响，再使用本地 Playwright 兜底。
+
 安装依赖：
 
 ```bash
