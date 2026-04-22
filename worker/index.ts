@@ -14,7 +14,7 @@ export default {
     if (url.pathname === "/api/health") {
       return jsonResponse({
         ok: true,
-        mode: "local-playwright-capture",
+        mode: "browser-extension-capture",
         llmConfigured: Boolean(env.OPENAI_API_KEY),
         bertConfigured: Boolean(env.BERT_INFERENCE_URL),
         fixtureEnabled: ["1", "true", "yes"].includes(String(env.LOCAL_FIXTURE_ENABLED || "").toLowerCase()),
