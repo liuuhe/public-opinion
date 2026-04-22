@@ -93,8 +93,8 @@ jobs:
           test -f bert/models/xhs-bert-sentiment/config.json
           test -f bert/models/xhs-bert-sentiment/tokenizer.json
           test -f bert/models/xhs-bert-sentiment/tokenizer_config.json
-          if [ ! -f bert/models/xhs-bert-sentiment/model.safetensors ] && [ ! -f bert/models/xhs-bert-sentiment/pytorch_model.bin ]; then
-            echo "Model ZIP must include model.safetensors or pytorch_model.bin."
+          if [ ! -f bert/models/xhs-bert-sentiment/model.onnx ] && [ ! -f bert/models/xhs-bert-sentiment/model.safetensors ] && [ ! -f bert/models/xhs-bert-sentiment/pytorch_model.bin ]; then
+            echo "Model ZIP must include model.onnx, model.safetensors, or pytorch_model.bin."
             exit 1
           fi
 
