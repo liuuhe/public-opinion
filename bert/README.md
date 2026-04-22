@@ -23,11 +23,13 @@ cd bert
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-python train.py --data data/seed.jsonl --output models/xhs-bert-sentiment --epochs 3
+python train.py --data data/seed.jsonl --output models/xhs-bert-sentiment --epochs 8
 ```
 
 The seed data is intentionally small. Add exported plugin comments and labels to
-improve the model before relying on BERT mode.
+improve the model before relying on BERT mode. Local model outputs under
+`models/` are ignored by git and should be uploaded separately to the inference
+runtime.
 
 ## Run Inference Locally
 
@@ -63,3 +65,6 @@ The inference API is compatible with the current Worker:
 
 - Request: `{ "samples": [{ "sample_id": "...", "text": "..." }] }`
 - Response: `{ "labels": [{ "sample_id": "...", "label": "...", "confidence": 0.0, "reason_short": "bert" }] }`
+
+Low-confidence BERT results may return `reason_short: "bert+rules"` after a
+small Chinese sentiment lexicon fallback is applied.

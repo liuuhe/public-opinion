@@ -66,7 +66,7 @@ cd bert
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-python train.py --data data/seed.jsonl --output models/xhs-bert-sentiment --epochs 3
+python train.py --data data/seed.jsonl --output models/xhs-bert-sentiment --epochs 8
 set MODEL_DIR=models/xhs-bert-sentiment
 uvicorn app:app --host 0.0.0.0 --port 7860
 ```

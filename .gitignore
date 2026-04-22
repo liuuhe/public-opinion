@@ -12,3 +12,4 @@ data/
 *.egg-info/
 build/
 dist/
+bert/models/

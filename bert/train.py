@@ -1,7 +1,6 @@
 import argparse
 import csv
 import json
-import random
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -52,7 +51,7 @@ class SentimentDataset(Dataset):
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fine-tune Chinese BERT for Xiaohongshu sentiment labels.")
     parser.add_argument("--data", default="data/seed.jsonl", help="JSONL or CSV file with text,label columns.")
-    parser.add_argument("--model", default="hfl/chinese-macbert-base", help="Base Hugging Face model.")
+    parser.add_argument("--model", default="google-bert/bert-base-chinese", help="Base Hugging Face model.")
     parser.add_argument("--output", default="models/xhs-bert-sentiment", help="Output model directory.")
     parser.add_argument("--epochs", type=float, default=3)
     parser.add_argument("--batch-size", type=int, default=8)
@@ -65,11 +64,7 @@ def main() -> None:
     if len(rows) < 9:
         raise SystemExit("Need at least 9 labeled rows so each label can appear in train/eval data.")
 
-    random.seed(args.seed)
-    random.shuffle(rows)
-    split_index = max(1, int(len(rows) * 0.85))
-    train_rows = rows[:split_index]
-    eval_rows = rows[split_index:] or rows[-3:]
+    train_rows, eval_rows = stratified_split(rows, seed=args.seed)
 
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     model = AutoModelForSequenceClassification.from_pretrained(
@@ -82,15 +77,13 @@ def main() -> None:
     training_args = TrainingArguments(
         output_dir=args.output,
         eval_strategy="epoch",
-        save_strategy="epoch",
+        save_strategy="no",
         learning_rate=args.learning_rate,
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
         num_train_epochs=args.epochs,
         weight_decay=0.01,
         logging_steps=10,
-        load_best_model_at_end=True,
-        metric_for_best_model="macro_f1",
         report_to=[],
         seed=args.seed,
     )
@@ -103,9 +96,15 @@ def main() -> None:
         compute_metrics=compute_metrics,
     )
     trainer.train()
-    trainer.save_model(args.output)
+    output_dir = Path(args.output)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    trainer.model.config.save_pretrained(output_dir)
+    torch.save(trainer.model.state_dict(), output_dir / "pytorch_model.bin")
+    stale_safetensors = output_dir / "model.safetensors"
+    if stale_safetensors.exists():
+        stale_safetensors.unlink()
     tokenizer.save_pretrained(args.output)
-    write_label_map(Path(args.output))
+    write_label_map(output_dir)
 
 
 def load_rows(path: Path) -> list[Row]:
@@ -130,6 +129,29 @@ def normalize_rows(items) -> list[Row]:
         if text and label in LABEL_TO_ID:
             rows.append(Row(text=text[:300], label=label))
     return rows
+
+
+def stratified_split(rows: list[Row], seed: int, eval_ratio: float = 0.18) -> tuple[list[Row], list[Row]]:
+    grouped: dict[str, list[Row]] = {label: [] for label in LABEL_TO_ID}
+    for row in rows:
+        grouped[row.label].append(row)
+
+    rng = np.random.default_rng(seed)
+    train_rows: list[Row] = []
+    eval_rows: list[Row] = []
+    for label, label_rows in grouped.items():
+        if len(label_rows) < 2:
+            raise SystemExit(f"Need at least 2 rows for label {label!r}.")
+
+        shuffled = list(label_rows)
+        rng.shuffle(shuffled)
+        eval_count = max(1, int(round(len(shuffled) * eval_ratio)))
+        eval_rows.extend(shuffled[:eval_count])
+        train_rows.extend(shuffled[eval_count:])
+
+    rng.shuffle(train_rows)
+    rng.shuffle(eval_rows)
+    return train_rows, eval_rows
 
 
 def compute_metrics(eval_prediction) -> dict[str, float]:
