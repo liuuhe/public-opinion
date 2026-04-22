@@ -98,27 +98,26 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 async function runAutoCapture(options) {
   const targetPosts = clampNumber(options.maxPosts, 10, 1, 30);
   const commentsPerPost = clampNumber(options.commentsPerPost, 20, 0, 80);
-  const concurrency = clampNumber(options.concurrency, 2, 1, 3);
+  const captureDelay = readDelayRange(options);
   updateStatus({
     ...DEFAULT_STATUS,
     running: true,
     phase: "discovering",
     message: "正在从当前搜索页提取帖子链接和 xsec_token。",
     targetPosts,
-    concurrency
+    concurrency: 1,
+    delayMinMs: captureDelay.minMs,
+    delayMaxMs: captureDelay.maxMs
   });
 
   let activeTabId = 0;
   let searchCapture = null;
   let candidates = [];
-  let index = 0;
   let assignedPosts = 0;
   const candidateQueue = [];
   const queuedCandidateKeys = new Set();
   const capturedPosts = [];
   const visitedCandidateKeys = new Set();
-  const discoveryLock = createAsyncLock();
-  const workerCount = Math.min(concurrency, targetPosts);
 
   try {
     activeTabId = Number(options.activeTabId);
@@ -146,13 +145,11 @@ async function runAutoCapture(options) {
 
     updateStatus({
       phase: "capturing",
-      message: `已发现 ${candidates.length} 篇帖子，开始用 ${Math.min(concurrency, targetPosts)} 个后台详情页并发采集评论。`,
+      message: `已发现 ${candidates.length} 篇帖子，开始单线程逐帖采集评论。`,
       discoveredPosts: candidates.length
     });
 
-    await Promise.all(
-      Array.from({ length: workerCount }, (_, workerIndex) => capturePostsWorker(workerIndex + 1))
-    );
+    await capturePostsSequentially();
 
     if (capturedPosts.length === 0) {
       throw new Error("没有采集到可分析帖子。请确认小红书已登录，并打开搜索结果页重试。");
@@ -187,7 +184,7 @@ async function runAutoCapture(options) {
     // The active Xiaohongshu search tab is intentionally kept open for the user.
   }
 
-  async function capturePostsWorker(workerNumber) {
+  async function capturePostsSequentially() {
     while (assignedPosts < targetPosts) {
       if (taskCancelled) {
         throw new Error("自动采集已取消。");
@@ -203,13 +200,14 @@ async function runAutoCapture(options) {
       updateStatus({
         currentIndex: postIndex,
         discoveredPosts: Math.max(taskStatus.discoveredPosts, queuedCandidateKeys.size),
-        message: `并发 ${workerNumber}/${workerCount} 正在后台打开第 ${postIndex}/${targetPosts} 篇：${candidate.title || candidate.url}`
+        message: `正在后台打开第 ${postIndex}/${targetPosts} 篇：${candidate.title || candidate.url}`
       });
       await waitWhilePaused();
 
       const capture = await capturePostInBackgroundTab({
         candidate,
-        maxComments: commentsPerPost
+        maxComments: commentsPerPost,
+        captureDelay
       });
       const bestPost = pickBestPost(capture?.posts || [], candidate);
       if (!bestPost) {
@@ -236,45 +234,48 @@ async function runAutoCapture(options) {
       if ((bestPost.comments || []).length === 0) {
         taskStatus.warnings.push(`第 ${postIndex} 篇没有采集到评论，可能评论区未加载或该帖无评论。`);
       }
-      await delay(250);
+      if (assignedPosts < targetPosts) {
+        const waitMs = randomDelayMs(captureDelay);
+        updateStatus({
+          message: `第 ${postIndex}/${targetPosts} 篇采集完成，随机等待 ${(waitMs / 1000).toFixed(1)} 秒后继续。`
+        });
+        await interruptibleDelay(waitMs);
+      }
     }
   }
 
   async function takeNextCandidate() {
-    return discoveryLock.run(async () => {
-      if (assignedPosts >= targetPosts) {
+    if (assignedPosts >= targetPosts) {
+      return null;
+    }
+
+    while (candidateQueue.length === 0 && assignedPosts < targetPosts) {
+      searchCapture = await discoverCandidates(activeTabId, Math.min(targetPosts, capturedPosts.length + 3), { light: true });
+      latestSearchCapture = searchCapture;
+      enqueueCandidates(
+        candidateQueue,
+        queuedCandidateKeys,
+        searchCapture?.posts || [],
+        targetPosts - assignedPosts - candidateQueue.length
+      );
+      candidates = Array.from(queuedCandidateKeys);
+      if (candidateQueue.length === 0) {
+        taskStatus.warnings.push(`当前搜索页只找到 ${capturedPosts.length} 篇可采集的帖子。`);
         return null;
       }
+    }
 
-      while (candidateQueue.length === 0 && assignedPosts < targetPosts) {
-        searchCapture = await discoverCandidates(activeTabId, Math.min(targetPosts, capturedPosts.length + 3), { light: true });
-        latestSearchCapture = searchCapture;
-        enqueueCandidates(
-          candidateQueue,
-          queuedCandidateKeys,
-          searchCapture?.posts || [],
-          targetPosts - assignedPosts - candidateQueue.length
-        );
-        candidates = Array.from(queuedCandidateKeys);
-        if (candidateQueue.length === 0) {
-          taskStatus.warnings.push(`当前搜索页只找到 ${capturedPosts.length} 篇可采集的帖子。`);
-          return null;
-        }
+    while (candidateQueue.length > 0) {
+      const candidate = candidateQueue.shift();
+      const candidateKey = getCandidateKey(candidate);
+      if (!candidateKey || visitedCandidateKeys.has(candidateKey)) {
+        continue;
       }
-
-      while (candidateQueue.length > 0) {
-        const candidate = candidateQueue.shift();
-        const candidateKey = getCandidateKey(candidate);
-        if (!candidateKey || visitedCandidateKeys.has(candidateKey)) {
-          continue;
-        }
-        visitedCandidateKeys.add(candidateKey);
-        assignedPosts += 1;
-        index = assignedPosts;
-        return { candidate, postIndex: assignedPosts };
-      }
-      return null;
-    });
+      visitedCandidateKeys.add(candidateKey);
+      assignedPosts += 1;
+      return { candidate, postIndex: assignedPosts };
+    }
+    return null;
   }
 }
 
@@ -322,7 +323,9 @@ function buildLatestCaptureExport() {
     engine: options.engine || "llm",
     maxPosts: clampNumber(options.maxPosts, 10, 1, 30),
     commentsPerPost,
-    concurrency: clampNumber(options.concurrency, 2, 1, 3),
+    concurrency: 1,
+    delayMinMs: clampNumber(options.delayMinMs, 1200, 0, 15000),
+    delayMaxMs: clampNumber(options.delayMaxMs, 3000, 0, 15000),
     pageUrl: latestSearchCapture?.pageUrl || "",
     pageTitle: latestSearchCapture?.pageTitle || "",
     capturedAt: new Date().toISOString(),
@@ -380,17 +383,6 @@ async function waitForSearchTabReady(tabId, keyword, timeoutMs) {
   throw new Error("关键词搜索页打开超时，请确认小红书页面可以正常访问。");
 }
 
-function createAsyncLock() {
-  let tail = Promise.resolve();
-  return {
-    run(task) {
-      const next = tail.then(task, task);
-      tail = next.catch(() => {});
-      return next;
-    }
-  };
-}
-
 function enqueueCandidates(queue, seen, posts, limit = Infinity) {
   if (limit <= 0) {
     return;
@@ -417,7 +409,7 @@ async function waitWhilePaused() {
   }
 }
 
-async function capturePostInBackgroundTab({ candidate, maxComments }) {
+async function capturePostInBackgroundTab({ candidate, maxComments, captureDelay }) {
   const url = normalizeCandidateUrl(candidate);
   if (!url) {
     throw new Error(`帖子 URL 无效：${candidate.postId || candidate.url || ""}`);
@@ -427,7 +419,7 @@ async function capturePostInBackgroundTab({ candidate, maxComments }) {
   try {
     tab = await chrome.tabs.create({ url, active: false });
     await waitForTabReady(tab.id, 18000);
-    await delay(900);
+    await interruptibleDelay(randomDelayMs(captureDelay));
     const capture = await sendCaptureMessage(tab.id, {
       type: "XHS_CAPTURE_SCROLL_AND_GET",
       enableNetwork: true,
@@ -633,6 +625,35 @@ function clampNumber(value, fallback, min, max) {
     return fallback;
   }
   return Math.min(max, Math.max(min, Math.floor(parsed)));
+}
+
+function readDelayRange(options) {
+  const minMs = clampNumber(options.delayMinMs, 1200, 0, 15000);
+  const maxMs = clampNumber(options.delayMaxMs, 3000, 0, 15000);
+  return {
+    minMs: Math.min(minMs, maxMs),
+    maxMs: Math.max(minMs, maxMs)
+  };
+}
+
+function randomDelayMs(range) {
+  const minMs = range?.minMs ?? 1200;
+  const maxMs = range?.maxMs ?? 3000;
+  if (maxMs <= minMs) {
+    return minMs;
+  }
+  return Math.round(minMs + Math.random() * (maxMs - minMs));
+}
+
+async function interruptibleDelay(ms) {
+  const endAt = Date.now() + Math.max(0, ms);
+  while (Date.now() < endAt) {
+    if (taskCancelled) {
+      throw new Error("自动采集已取消。");
+    }
+    await waitWhilePaused();
+    await delay(Math.min(300, endAt - Date.now()));
+  }
 }
 
 function decodeText(value) {

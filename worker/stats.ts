@@ -141,7 +141,7 @@ function buildInsights(input: {
     return [
       {
         title: "暂无有效评论样本",
-        detail: "Worker 已收到插件采集结果，但没有可标注评论。建议先降低并发或增加每帖评论数后重试。",
+        detail: "Worker 已收到插件采集结果，但没有可标注评论。建议先增加随机延迟或每帖评论数后重试。",
         tone: "info"
       }
     ];
@@ -216,7 +216,7 @@ function buildRecommendedActions(
   warnings: string[]
 ): string[] {
   if (totals.validSamples === 0) {
-    return ["重新采集时确认帖子详情页评论区可加载。", "将每帖评论数调高到 20 以上，必要时把并发数降为 1。"];
+    return ["重新采集时确认帖子详情页评论区可加载。", "将每帖评论数调高到 20 以上，必要时把随机延迟调高。"];
   }
   const actions = ["查看代表样本，先核对高置信度评论是否符合业务判断。"];
   if (distribution.negative.ratio >= 0.3) {

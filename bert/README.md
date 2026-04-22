@@ -48,6 +48,44 @@ The archived model copied from that dataset was trained on 2701 rows, validated
 on 338 rows, and tested on 336 rows. Its held-out test metrics were
 `accuracy=0.7738` and `macro_f1=0.7269`.
 
+## Export ONNX
+
+The inference service prefers `model.onnx` when it exists in the model
+directory. If `model.onnx` is missing, it falls back to the PyTorch weights.
+
+Export and verify ONNX after training:
+
+```powershell
+cd bert
+python export_onnx.py `
+  --model-dir models/xhs-bert-sentiment `
+  --verify
+```
+
+Expected output:
+
+```text
+ONNX verification max_abs_diff=...
+ONNX model exported: models/xhs-bert-sentiment/model.onnx
+```
+
+Then package and redeploy the model as usual:
+
+```powershell
+npm run package:bert:model
+gh release upload bert-model .deploy/xhs-bert-sentiment.zip --clobber
+```
+
+When `model.onnx` exists, the package script creates an ONNX-only model zip and
+does not duplicate `model.safetensors` / `pytorch_model.bin`.
+
+Run the `Deploy Cloudflare Containers` GitHub Actions workflow. After deploy,
+`/api/bert/health` should report:
+
+```json
+{"runtime":"onnxruntime"}
+```
+
 ## Run Inference Locally
 
 ```bash

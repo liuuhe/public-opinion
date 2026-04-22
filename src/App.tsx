@@ -1,5 +1,5 @@
 import { useMemo, useState, type DragEvent } from "react";
-import { AlertCircle, BarChart3, CheckCircle2, Database, Download, FileJson, FileText, Lightbulb, MessageCircle, Radar, Upload } from "lucide-react";
+import { AlertCircle, BarChart3, CheckCircle2, Database, Download, FileDown, FileJson, FileText, Lightbulb, MessageCircle, Radar, Upload } from "lucide-react";
 import { Bar, BarChart, Cell, Pie, PieChart, Tooltip, XAxis, YAxis } from "recharts";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +19,7 @@ const DEFAULT_WORKER_URL = "https://opinion.liuhe.me";
 const LLM_CHUNK_SIZE = 20;
 const LLM_CHUNK_CONCURRENCY = 3;
 const ESTIMATED_WAVE_SECONDS = 8;
+type ExportFormat = "json" | "csv" | "markdown" | "pdf";
 
 const LABEL_META: Record<SentimentLabel, { name: string; description: string; color: string; badgeClass: string }> = {
   positive: {
@@ -156,8 +157,12 @@ function App() {
     }
   }
 
-  function exportReport(format: "json" | "csv" | "markdown") {
+  function exportReport(format: ExportFormat) {
     if (!result) {
+      return;
+    }
+    if (format === "pdf") {
+      printPdfReport(result);
       return;
     }
     const payload = {
@@ -213,7 +218,7 @@ function App() {
               <p className="text-sm font-medium">推荐流程</p>
               <ol className="text-muted-foreground mt-2 grid gap-1 text-sm leading-6">
                 <li>1. 在浏览器扩展页重新加载 <code>browser-extension</code>。</li>
-                <li>2. 打开已登录的小红书页面，填写关键词、帖子数、每帖评论和并发数。</li>
+                <li>2. 打开已登录的小红书页面，填写关键词、帖子数、每帖评论和随机延迟。</li>
                 <li>3. 点击插件里的“自动逐帖”，完成后可直接发送分析或导出 JSON。</li>
                 <li>4. 把插件导出的 capture JSON 拖到右侧，网页会生成可导出的报告。</li>
               </ol>
@@ -288,7 +293,7 @@ function HeroCard() {
         <div className="grid gap-2 sm:grid-cols-3 md:grid-cols-1">
           <MetricPill label="采集" value="浏览器插件" />
           <MetricPill label="分析" value="远程 Worker" />
-          <MetricPill label="沉淀" value="JSON / CSV / Markdown" />
+          <MetricPill label="沉淀" value="PDF / JSON / CSV" />
         </div>
       </CardContent>
     </Card>
@@ -329,7 +334,7 @@ function EmptyReportPreview() {
   );
 }
 
-function ReportDashboard({ result, onExport }: { result: AnalysisResponse; onExport: (format: "json" | "csv" | "markdown") => void }) {
+function ReportDashboard({ result, onExport }: { result: AnalysisResponse; onExport: (format: ExportFormat) => void }) {
   const chartData = useMemo(
     () =>
       (["positive", "neutral", "negative"] as SentimentLabel[]).map((label) => ({
@@ -623,9 +628,13 @@ function PostTable({ posts }: { posts: AnalysisResponse["posts"] }) {
   );
 }
 
-function ExportButtons({ onExport }: { onExport: (format: "json" | "csv" | "markdown") => void }) {
+function ExportButtons({ onExport }: { onExport: (format: ExportFormat) => void }) {
   return (
     <div className="flex flex-wrap gap-2">
+      <Button variant="outline" size="sm" onClick={() => onExport("pdf")}>
+        <FileDown />
+        PDF
+      </Button>
       <Button variant="outline" size="sm" onClick={() => onExport("json")}>
         <FileJson />
         JSON
@@ -722,6 +731,158 @@ function downloadText(content: string, filename: string, type: string) {
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;"
+  })[char] || char);
+}
+
+function printPdfReport(result: AnalysisResponse) {
+  const printWindow = window.open("", "_blank", "width=960,height=1200");
+  if (!printWindow) {
+    return;
+  }
+  printWindow.document.open();
+  printWindow.document.write(buildPrintableHtml(result));
+  printWindow.document.close();
+  printWindow.focus();
+  window.setTimeout(() => {
+    printWindow.print();
+  }, 250);
+}
+
+function buildPrintableHtml(result: AnalysisResponse): string {
+  const report = result.report;
+  const distributionRows = (["positive", "neutral", "negative"] as SentimentLabel[])
+    .map((label) => {
+      const bucket = result.distribution[label];
+      return `<tr><td>${LABEL_META[label].name}</td><td>${bucket.count}</td><td>${Math.round(bucket.ratio * 100)}%</td><td>${Math.round(
+        bucket.averageConfidence * 100
+      )}%</td></tr>`;
+    })
+    .join("");
+  const findingRows = (report?.keyFindings || result.insights || [])
+    .map((item) => `<li><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></li>`)
+    .join("");
+  const actionRows = (report?.recommendedActions || [])
+    .map((action, index) => `<li><strong>${index + 1}.</strong><span>${escapeHtml(action)}</span></li>`)
+    .join("");
+  const sampleRows = result.samples
+    .slice(0, 24)
+    .map(
+      (sample) => `<article>
+        <div><strong>${LABEL_META[sample.label].name}</strong><span>${Math.round(sample.confidence * 100)}%</span></div>
+        <p>${escapeHtml(sample.text)}</p>
+        <small>${escapeHtml(sample.reasonShort)} | ${escapeHtml(sample.postTitle)}</small>
+      </article>`
+    )
+    .join("");
+  const postRows = result.posts
+    .slice(0, 30)
+    .map(
+      (post) => `<tr>
+        <td>${escapeHtml(post.title || "未提取标题")}</td>
+        <td>${post.comments.length}</td>
+        <td>${escapeHtml(post.tags.slice(0, 4).join("、") || "-")}</td>
+      </tr>`
+    )
+    .join("");
+  const warnings = result.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("");
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(result.report?.headline || `${result.keyword} 舆情情绪报告`)}</title>
+  <style>
+    @page { size: A4; margin: 16mm; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: #17202a;
+      background: #fff;
+      font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif;
+      font-size: 12px;
+      line-height: 1.65;
+    }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 25px; line-height: 1.28; }
+    h2 { margin: 22px 0 10px; font-size: 16px; border-bottom: 1px solid #d9e2ec; padding-bottom: 5px; }
+    h3 { font-size: 13px; }
+    .meta { margin-top: 10px; color: #52616f; display: flex; flex-wrap: wrap; gap: 8px; }
+    .pill { border: 1px solid #d9e2ec; border-radius: 999px; padding: 2px 8px; }
+    .summary { margin-top: 14px; padding: 12px; background: #f5f7fa; border: 1px solid #d9e2ec; border-radius: 8px; }
+    .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 16px; }
+    .metric { border: 1px solid #d9e2ec; border-radius: 8px; padding: 10px; }
+    .metric span { color: #52616f; display: block; }
+    .metric strong { font-size: 20px; display: block; margin-top: 3px; }
+    table { width: 100%; border-collapse: collapse; page-break-inside: avoid; }
+    th, td { border: 1px solid #d9e2ec; padding: 7px; text-align: left; vertical-align: top; }
+    th { background: #f5f7fa; }
+    ul, ol { margin: 0; padding-left: 18px; }
+    li { margin: 5px 0; }
+    li span { display: block; }
+    .samples { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    article { border: 1px solid #d9e2ec; border-radius: 8px; padding: 8px; page-break-inside: avoid; }
+    article div { display: flex; justify-content: space-between; color: #0f766e; }
+    article p { margin-top: 6px; }
+    article small { display: block; margin-top: 6px; color: #52616f; }
+    .footer { margin-top: 22px; color: #697586; font-size: 10px; }
+    @media print {
+      body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+      .samples { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(report?.headline || `${result.keyword} 舆情情绪报告`)}</h1>
+  <div class="meta">
+    <span class="pill">关键词：${escapeHtml(result.keyword)}</span>
+    <span class="pill">引擎：${escapeHtml(result.engine.toUpperCase())}</span>
+    <span class="pill">时间：${escapeHtml(new Date(result.capturedAt).toLocaleString("zh-CN"))}</span>
+    <span class="pill">来源：${escapeHtml(result.sourceMode)}</span>
+  </div>
+  <p class="summary">${escapeHtml(report?.executiveSummary || result.summary)}</p>
+
+  <section class="metrics">
+    <div class="metric"><span>帖子</span><strong>${result.totals.posts}</strong></div>
+    <div class="metric"><span>评论</span><strong>${result.totals.comments}</strong></div>
+    <div class="metric"><span>有效样本</span><strong>${result.totals.validSamples}</strong></div>
+  </section>
+
+  <h2>关键发现</h2>
+  <ul>${findingRows || "<li>暂无关键发现</li>"}</ul>
+
+  <h2>建议动作</h2>
+  <ol>${actionRows || "<li>暂无建议动作</li>"}</ol>
+
+  <h2>情绪分布</h2>
+  <table>
+    <thead><tr><th>情绪</th><th>数量</th><th>占比</th><th>平均置信度</th></tr></thead>
+    <tbody>${distributionRows}</tbody>
+  </table>
+
+  <h2>代表评论</h2>
+  <div class="samples">${sampleRows || "<p>暂无样本</p>"}</div>
+
+  <h2>帖子来源</h2>
+  <table>
+    <thead><tr><th>帖子</th><th>评论数</th><th>标签</th></tr></thead>
+    <tbody>${postRows || "<tr><td colspan='3'>暂无帖子</td></tr>"}</tbody>
+  </table>
+
+  <h2>数据说明</h2>
+  <p>${escapeHtml(report?.dataQuality?.message || "未提供")}</p>
+  ${warnings ? `<ul>${warnings}</ul>` : ""}
+
+  <p class="footer">由 Xiaohongshu Opinion Radar 生成。PDF 导出使用浏览器打印功能。</p>
+</body>
+</html>`;
 }
 
 function buildCsv(result: AnalysisResponse): string {

@@ -5,7 +5,8 @@ const elements = {
   keyword: document.querySelector("#keyword"),
   maxPosts: document.querySelector("#maxPosts"),
   commentsPerPost: document.querySelector("#commentsPerPost"),
-  concurrency: document.querySelector("#concurrency"),
+  delayMinSeconds: document.querySelector("#delayMinSeconds"),
+  delayMaxSeconds: document.querySelector("#delayMaxSeconds"),
   engine: document.querySelector("#engine"),
   captureBtn: document.querySelector("#captureBtn"),
   autoCaptureBtn: document.querySelector("#autoCaptureBtn"),
@@ -29,7 +30,7 @@ elements.pauseBtn.addEventListener("click", () => void toggleAutoPause());
 elements.exportBtn.addEventListener("click", () => void exportCaptureData());
 elements.analyzeBtn.addEventListener("click", () => void analyzeCapture());
 
-for (const key of ["workerUrl", "keyword", "maxPosts", "commentsPerPost", "concurrency", "engine"]) {
+for (const key of ["workerUrl", "keyword", "maxPosts", "commentsPerPost", "delayMinSeconds", "delayMaxSeconds", "engine"]) {
   elements[key].addEventListener("change", saveSettings);
 }
 
@@ -39,14 +40,16 @@ async function loadSettings() {
     keyword: "",
     maxPosts: 10,
     commentsPerPost: 20,
-    concurrency: 2,
+    delayMinMs: 1200,
+    delayMaxMs: 3000,
     engine: "llm"
   });
   elements.workerUrl.value = saved.workerUrl;
   elements.keyword.value = saved.keyword;
   elements.maxPosts.value = saved.maxPosts;
   elements.commentsPerPost.value = saved.commentsPerPost;
-  elements.concurrency.value = saved.concurrency;
+  elements.delayMinSeconds.value = formatSeconds(saved.delayMinMs);
+  elements.delayMaxSeconds.value = formatSeconds(saved.delayMaxMs);
   elements.engine.value = saved.engine;
 }
 
@@ -57,7 +60,8 @@ function saveSettings() {
     keyword: elements.keyword.value.trim(),
     maxPosts: limits.maxPosts,
     commentsPerPost: limits.commentsPerPost,
-    concurrency: limits.concurrency,
+    delayMinMs: limits.delayMinMs,
+    delayMaxMs: limits.delayMaxMs,
     engine: elements.engine.value
   });
 }
@@ -179,7 +183,9 @@ async function analyzeCapture() {
         engine: elements.engine.value,
         maxPosts: limits.maxPosts,
         commentsPerPost: limits.commentsPerPost,
-        concurrency: limits.concurrency,
+        concurrency: 1,
+        delayMinMs: limits.delayMinMs,
+        delayMaxMs: limits.delayMaxMs,
         pageUrl: capture.pageUrl,
         posts: capture.posts
       },
@@ -253,7 +259,9 @@ function buildCurrentCaptureExport() {
     engine: elements.engine.value,
     maxPosts: limits.maxPosts,
     commentsPerPost: limits.commentsPerPost,
-    concurrency: limits.concurrency,
+    concurrency: 1,
+    delayMinMs: limits.delayMinMs,
+    delayMaxMs: limits.delayMaxMs,
     pageUrl: capture.pageUrl,
     pageTitle: capture.pageTitle,
     capturedAt: new Date().toISOString(),
@@ -375,10 +383,14 @@ function setStatus(message) {
 }
 
 function readLimits() {
+  const delayMinMs = secondsToMs(elements.delayMinSeconds.value, 1200);
+  const delayMaxMs = secondsToMs(elements.delayMaxSeconds.value, 3000);
   return {
     maxPosts: clampNumber(elements.maxPosts.value, 10, 1, 30),
     commentsPerPost: clampNumber(elements.commentsPerPost.value, 20, 0, 80),
-    concurrency: clampNumber(elements.concurrency.value, 2, 1, 3)
+    concurrency: 1,
+    delayMinMs: Math.min(delayMinMs, delayMaxMs),
+    delayMaxMs: Math.max(delayMinMs, delayMaxMs)
   };
 }
 
@@ -403,6 +415,19 @@ function clampNumber(value, fallback, min, max) {
     return fallback;
   }
   return Math.min(max, Math.max(min, Math.floor(parsed)));
+}
+
+function secondsToMs(value, fallbackMs) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallbackMs;
+  }
+  return Math.min(15000, Math.max(0, Math.round(parsed * 1000)));
+}
+
+function formatSeconds(value) {
+  const seconds = Math.max(0, Number(value || 0) / 1000);
+  return Number.isInteger(seconds) ? String(seconds) : seconds.toFixed(1);
 }
 
 function escapeHtml(value) {

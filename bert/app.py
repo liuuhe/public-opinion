@@ -1,6 +1,8 @@
 import os
 from typing import Literal
 
+import numpy as np
+import onnxruntime as ort
 import torch
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
@@ -8,6 +10,7 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 MODEL_DIR = os.getenv("MODEL_DIR", "model")
 FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "google-bert/bert-base-chinese")
+ONNX_MODEL_FILE = os.getenv("ONNX_MODEL_FILE", "")
 
 LABELS = ["negative", "neutral", "positive"]
 ID_TO_LABEL = {index: label for index, label in enumerate(LABELS)}
@@ -67,16 +70,24 @@ class PredictResponse(BaseModel):
 app = FastAPI(title="XHS BERT Sentiment Service")
 tokenizer = None
 model = None
+onnx_session = None
+onnx_input_names: set[str] = set()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 @app.on_event("startup")
 def load_model() -> None:
-    global tokenizer, model
+    global tokenizer, model, onnx_session, onnx_input_names
     has_local_model = os.path.exists(MODEL_DIR)
     model_path = MODEL_DIR if has_local_model else FALLBACK_MODEL
     tokenizer = AutoTokenizer.from_pretrained(model_path)
-    if has_local_model:
+    onnx_file = find_onnx_model_file(MODEL_DIR)
+    onnx_path = os.path.join(MODEL_DIR, onnx_file) if onnx_file else ""
+    if has_local_model and os.path.exists(onnx_path):
+        onnx_session = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
+        onnx_input_names = {item.name for item in onnx_session.get_inputs()}
+        model = None
+    elif has_local_model:
         model = AutoModelForSequenceClassification.from_pretrained(model_path)
     else:
         model = AutoModelForSequenceClassification.from_pretrained(
@@ -85,8 +96,9 @@ def load_model() -> None:
             id2label=ID_TO_LABEL,
             label2id={label: index for index, label in ID_TO_LABEL.items()},
         )
-    model.to(device)
-    model.eval()
+    if model is not None:
+        model.to(device)
+        model.eval()
 
 
 @app.get("/health")
@@ -95,6 +107,8 @@ def health() -> dict[str, object]:
         "ok": True,
         "modelDir": MODEL_DIR,
         "fallbackModel": FALLBACK_MODEL,
+        "runtime": "onnxruntime" if onnx_session is not None else "pytorch",
+        "onnxModelFile": find_onnx_model_file(MODEL_DIR),
         "device": str(device),
     }
 
@@ -105,21 +119,18 @@ def predict(request: PredictRequest) -> PredictResponse:
         return PredictResponse(labels=[])
 
     texts = [sample.text[:300] for sample in request.samples]
-    encoded = tokenizer(
-        texts,
-        padding=True,
-        truncation=True,
-        max_length=160,
-        return_tensors="pt",
-    ).to(device)
-
-    with torch.no_grad():
-        logits = model(**encoded).logits
-        probabilities = torch.softmax(logits, dim=-1)
-        confidences, predictions = torch.max(probabilities, dim=-1)
+    if onnx_session is not None:
+        probabilities = predict_probabilities_onnx(texts)
+        predictions = np.argmax(probabilities, axis=-1).tolist()
+        confidences = np.max(probabilities, axis=-1).tolist()
+    else:
+        probabilities_tensor = predict_probabilities_torch(texts)
+        confidences_tensor, predictions_tensor = torch.max(probabilities_tensor, dim=-1)
+        predictions = predictions_tensor.tolist()
+        confidences = confidences_tensor.tolist()
 
     labels = []
-    for sample, prediction, confidence in zip(request.samples, predictions.tolist(), confidences.tolist()):
+    for sample, prediction, confidence in zip(request.samples, predictions, confidences):
         label = ID_TO_LABEL.get(prediction, "neutral")
         reason = "bert"
         if confidence < LOW_CONFIDENCE_THRESHOLD:
@@ -138,6 +149,44 @@ def predict(request: PredictRequest) -> PredictResponse:
             )
         )
     return PredictResponse(labels=labels)
+
+
+def predict_probabilities_onnx(texts: list[str]) -> np.ndarray:
+    encoded = tokenizer(
+        texts,
+        padding=True,
+        truncation=True,
+        max_length=160,
+        return_tensors="np",
+    )
+    inputs = {key: value.astype(np.int64) for key, value in encoded.items() if key in onnx_input_names}
+    logits = onnx_session.run(None, inputs)[0]
+    logits = logits - np.max(logits, axis=-1, keepdims=True)
+    exp = np.exp(logits)
+    return exp / np.sum(exp, axis=-1, keepdims=True)
+
+
+def predict_probabilities_torch(texts: list[str]) -> torch.Tensor:
+    encoded = tokenizer(
+        texts,
+        padding=True,
+        truncation=True,
+        max_length=160,
+        return_tensors="pt",
+    ).to(device)
+
+    with torch.no_grad():
+        logits = model(**encoded).logits
+        return torch.softmax(logits, dim=-1)
+
+
+def find_onnx_model_file(model_dir: str) -> str:
+    if ONNX_MODEL_FILE:
+        return ONNX_MODEL_FILE
+    for filename in ("model-int8.onnx", "model.onnx"):
+        if os.path.exists(os.path.join(model_dir, filename)):
+            return filename
+    return ""
 
 
 def rule_label_for(text: str) -> Literal["positive", "neutral", "negative"] | None:

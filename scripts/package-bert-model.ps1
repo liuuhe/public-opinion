@@ -21,9 +21,9 @@ foreach ($file in @("config.json", "tokenizer.json", "tokenizer_config.json")) {
   }
 }
 
-$hasWeights = (Test-Path (Join-Path $modelPath.Path "model.safetensors")) -or (Test-Path (Join-Path $modelPath.Path "pytorch_model.bin"))
+$hasWeights = (Test-Path (Join-Path $modelPath.Path "model.onnx")) -or (Test-Path (Join-Path $modelPath.Path "model.safetensors")) -or (Test-Path (Join-Path $modelPath.Path "pytorch_model.bin"))
 if (-not $hasWeights) {
-  throw "Model directory must contain model.safetensors or pytorch_model.bin: $($modelPath.Path)"
+  throw "Model directory must contain model.onnx, model.safetensors, or pytorch_model.bin: $($modelPath.Path)"
 }
 
 $outputPath = Join-Path $repoRoot.Path $Output
@@ -38,8 +38,29 @@ if (Test-Path $stagingDir) {
   Remove-Item -LiteralPath $stagingDir -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
-Get-ChildItem -LiteralPath $modelPath.Path -Force | ForEach-Object {
-  Copy-Item -LiteralPath $_.FullName -Destination $stagingDir -Recurse -Force
+
+$onnxPath = Join-Path $modelPath.Path "model.onnx"
+if (Test-Path $onnxPath) {
+  $includeFiles = @(
+    "config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "label_map.json",
+    "metrics.json",
+    "model.onnx",
+    "model.onnx.data",
+    "model-int8.onnx"
+  )
+  foreach ($file in $includeFiles) {
+    $source = Join-Path $modelPath.Path $file
+    if (Test-Path $source) {
+      Copy-Item -LiteralPath $source -Destination $stagingDir -Force
+    }
+  }
+} else {
+  Get-ChildItem -LiteralPath $modelPath.Path -Force | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination $stagingDir -Recurse -Force
+  }
 }
 
 Compress-Archive -Path $stagingDir -DestinationPath $outputPath -CompressionLevel Optimal
