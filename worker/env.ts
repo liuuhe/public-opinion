@@ -2,6 +2,7 @@ import type { AnalysisDiagnostics, AnalysisErrorCode } from "../src/shared/types
 
 export interface Env {
   ASSETS?: Fetcher;
+  BERT_CONTAINER?: DurableObjectNamespace;
   OPENAI_API_KEY?: string;
   OPENAI_BASE_URL?: string;
   OPENAI_MODEL?: string;

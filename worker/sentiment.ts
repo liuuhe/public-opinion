@@ -25,6 +25,7 @@ const SYSTEM_PROMPT = `你是网络舆情情绪标注器。任务是把评论标
 
 const LLM_CHUNK_SIZE = 20;
 const LLM_CHUNK_CONCURRENCY = 3;
+const BERT_CONTAINER_NAME = "xhs-bert-sentiment";
 
 interface LabelResult {
   sampleId: string;
@@ -190,7 +191,7 @@ function parseLlmResponse(payload: unknown): LabelResult[] {
 }
 
 async function labelWithBert(env: Env, comments: CapturedComment[]): Promise<LabelResult[]> {
-  if (!env.BERT_INFERENCE_URL) {
+  if (!hasBertInference(env)) {
     throw new ApiError(
       400,
       "BERT 推理服务未配置",
@@ -198,7 +199,7 @@ async function labelWithBert(env: Env, comments: CapturedComment[]): Promise<Lab
     );
   }
 
-  const response = await fetch(env.BERT_INFERENCE_URL, {
+  const requestInit = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -207,7 +208,15 @@ async function labelWithBert(env: Env, comments: CapturedComment[]): Promise<Lab
         text: comment.text
       }))
     })
-  });
+  };
+
+  let response = env.BERT_CONTAINER ? await fetchBertContainer(env, "/predict", requestInit) : null;
+  if (!response?.ok && env.BERT_INFERENCE_URL) {
+    response = await fetch(env.BERT_INFERENCE_URL, requestInit);
+  }
+  if (!response) {
+    throw new ApiError(502, "BERT inference unavailable", "No Cloudflare Container response and no BERT_INFERENCE_URL fallback.");
+  }
 
   if (!response.ok) {
     const body = await response.text();
@@ -219,6 +228,22 @@ async function labelWithBert(env: Env, comments: CapturedComment[]): Promise<Lab
   return rows
     .map((row) => normalizeLabelRow(row))
     .filter((row): row is LabelResult => Boolean(row));
+}
+
+export function hasBertInference(env: Env): boolean {
+  return Boolean(env.BERT_CONTAINER || env.BERT_INFERENCE_URL);
+}
+
+export async function fetchBertContainer(
+  env: Env,
+  pathname: string,
+  init?: RequestInit
+): Promise<Response | null> {
+  if (!env.BERT_CONTAINER) {
+    return null;
+  }
+  const container = env.BERT_CONTAINER.getByName(BERT_CONTAINER_NAME);
+  return container.fetch(new Request(`http://bert.local${pathname}`, init));
 }
 
 function normalizeLabelRow(row: unknown): LabelResult | null {

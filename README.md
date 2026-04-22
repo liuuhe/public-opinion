@@ -51,7 +51,9 @@ npm run deploy
 
 ## BERT Mode
 
-Worker 不在 Cloudflare 内运行 PyTorch。选择 BERT 时，Worker 会调用外部 HTTP 推理服务：
+Worker 支持两种 BERT 推理方式：优先调用 Cloudflare Containers 里的本地 BERT
+模型；如果仍配置了 `BERT_INFERENCE_URL`，则可回退到 Hugging Face Space 等外部
+HTTP 推理服务：
 
 ```bash
 wrangler secret put BERT_INFERENCE_URL
@@ -70,6 +72,16 @@ python train.py --data data/seed.jsonl --output models/xhs-bert-sentiment --epoc
 set MODEL_DIR=models/xhs-bert-sentiment
 uvicorn app:app --host 0.0.0.0 --port 7860
 ```
+
+如果要把 BERT 也部署到 Cloudflare，先安装并启动 Docker，然后在项目根目录运行：
+
+```bash
+npm run deploy:bert:cf
+```
+
+该命令会用 `bert/Dockerfile` 构建 Cloudflare Containers 镜像，并通过
+`BERT_CONTAINER` Durable Object 绑定让 Worker 调用容器。Worker 会优先调用
+Cloudflare 容器；如果仍保留 `BERT_INFERENCE_URL`，容器失败时会回退到外部推理地址。
 
 推理接口兼容 Worker：
 

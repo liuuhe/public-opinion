@@ -9,7 +9,7 @@ import type {
 } from "../src/shared/types";
 import { ApiError, type Env } from "./env";
 import { buildFixtureAnalysis } from "./fixtures";
-import { labelComments } from "./sentiment";
+import { hasBertInference, labelComments } from "./sentiment";
 import { buildAnalysisResponse } from "./stats";
 import { clampNumber, hashIdentifier } from "./text";
 
@@ -49,7 +49,7 @@ export async function analyzeClientCapture(
   const commentsPerPost = clampNumber(request.commentsPerPost, DEFAULT_COMMENTS_PER_POST, 0, 80);
   const warnings: string[] = [];
 
-  if (engine === "bert" && !env.BERT_INFERENCE_URL) {
+  if (engine === "bert" && !hasBertInference(env)) {
     throw new ApiError(
       400,
       "BERT 推理服务未配置",

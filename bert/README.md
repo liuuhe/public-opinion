@@ -106,3 +106,32 @@ The inference API is compatible with the current Worker:
 
 Low-confidence BERT results may return `reason_short: "bert+rules"` after a
 small Chinese sentiment lexicon fallback is applied.
+
+## Deploy To Cloudflare Containers
+
+Cloudflare Containers keeps the Worker, web UI, and BERT model on Cloudflare.
+It requires Docker locally because Wrangler builds and pushes the container
+image during deployment.
+
+The current container image is defined by `bert/Dockerfile` and copies:
+
+- `bert/app.py`
+- `bert/requirements-container.txt`
+- `bert/models/xhs-bert-sentiment/`
+
+Deploy the Worker plus BERT container:
+
+```powershell
+npm run deploy:bert:cf
+```
+
+After deployment, check:
+
+```text
+https://opinion.liuhe.me/api/health
+https://opinion.liuhe.me/api/bert/health
+```
+
+The Worker prefers the Cloudflare container when `BERT_CONTAINER` is bound. If
+the container call fails and `BERT_INFERENCE_URL` is still configured, it falls
+back to the external inference URL.

@@ -9,10 +9,12 @@
     "preview": "npm run build && vite preview --host 0.0.0.0",
     "deploy": "npm run build && wrangler deploy",
     "deploy:bert": "powershell -ExecutionPolicy Bypass -File scripts/deploy-bert-space.ps1",
+    "deploy:bert:cf": "npm run build && wrangler deploy --containers-rollout=immediate",
     "check": "tsc -b",
     "test:worker": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
+    "@cloudflare/containers": "^0.3.3",
     "@radix-ui/react-label": "^2.1.8",
     "@radix-ui/react-progress": "^1.1.8",
     "@radix-ui/react-scroll-area": "^1.2.10",

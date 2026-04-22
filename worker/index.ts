@@ -2,6 +2,9 @@ import type { AnalyzeRequest, ClientCapturedAnalyzeRequest } from "../src/shared
 import { analyzeClientCapture, analyzeFixtureRequest } from "./analyze";
 import { ApiError, type Env } from "./env";
 import { errorResponse, jsonResponse, optionsResponse } from "./http";
+import { fetchBertContainer, hasBertInference } from "./sentiment";
+
+export { BertContainer } from "./bert-container";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -16,10 +19,26 @@ export default {
         ok: true,
         mode: "browser-extension-capture",
         llmConfigured: Boolean(env.OPENAI_API_KEY),
-        bertConfigured: Boolean(env.BERT_INFERENCE_URL),
+        bertConfigured: hasBertInference(env),
+        bertProvider: env.BERT_CONTAINER ? "cloudflare-container" : env.BERT_INFERENCE_URL ? "external-url" : "none",
         fixtureEnabled: ["1", "true", "yes"].includes(String(env.LOCAL_FIXTURE_ENABLED || "").toLowerCase()),
         model: env.OPENAI_MODEL || "gpt-4o-mini"
       });
+    }
+
+    if (url.pathname === "/api/bert/health") {
+      try {
+        const response = await fetchBertContainer(env, "/health");
+        if (response) {
+          return response;
+        }
+        if (env.BERT_INFERENCE_URL) {
+          return fetch(new URL("/health", env.BERT_INFERENCE_URL).toString());
+        }
+        throw new ApiError(503, "BERT inference is not configured");
+      } catch (error) {
+        return errorResponse(error);
+      }
     }
 
     if (url.pathname === "/api/analyze" && request.method === "POST") {
