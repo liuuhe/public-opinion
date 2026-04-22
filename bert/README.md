@@ -135,3 +135,41 @@ https://opinion.liuhe.me/api/bert/health
 The Worker prefers the Cloudflare container when `BERT_CONTAINER` is bound. If
 the container call fails and `BERT_INFERENCE_URL` is still configured, it falls
 back to the external inference URL.
+
+### GitHub Actions Deployment
+
+If Docker is not installed locally, use the GitHub Actions workflow instead.
+The workflow downloads the model from a GitHub Release asset, builds the Docker
+image on GitHub's runner, and deploys the Worker plus container to Cloudflare.
+
+One-time model packaging from this machine:
+
+```powershell
+npm run package:bert:model
+```
+
+Upload `.deploy/xhs-bert-sentiment.zip` to a GitHub Release tagged `bert-model`.
+You can use the GitHub web UI, or the GitHub CLI:
+
+```powershell
+gh release create bert-model .deploy/xhs-bert-sentiment.zip `
+  --title "BERT model" `
+  --notes "BERT model for Cloudflare Containers"
+```
+
+If the release already exists:
+
+```powershell
+gh release upload bert-model .deploy/xhs-bert-sentiment.zip --clobber
+```
+
+Add these GitHub repository secrets:
+
+- `CLOUDFLARE_API_TOKEN`: API token with permission to deploy this Worker.
+- `CLOUDFLARE_ACCOUNT_ID`: Cloudflare account id.
+
+Then run the `Deploy Cloudflare Containers` workflow from GitHub Actions. The
+default inputs expect:
+
+- release tag: `bert-model`
+- asset name: `xhs-bert-sentiment.zip`

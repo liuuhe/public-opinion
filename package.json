@@ -10,6 +10,7 @@
     "deploy": "npm run build && wrangler deploy",
     "deploy:bert": "powershell -ExecutionPolicy Bypass -File scripts/deploy-bert-space.ps1",
     "deploy:bert:cf": "npm run build && wrangler deploy --containers-rollout=immediate",
+    "package:bert:model": "powershell -ExecutionPolicy Bypass -File scripts/package-bert-model.ps1",
     "check": "tsc -b",
     "test:worker": "vitest run --config vitest.config.ts"
   },

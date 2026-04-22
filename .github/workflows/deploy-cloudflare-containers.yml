@@ -1,0 +1,82 @@
+name: Deploy Cloudflare Containers
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_release_tag:
+        description: "GitHub Release tag that contains the BERT model ZIP"
+        required: true
+        default: "bert-model"
+      model_asset_name:
+        description: "Release asset ZIP name"
+        required: true
+        default: "xhs-bert-sentiment.zip"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download BERT model release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODEL_RELEASE_TAG: ${{ inputs.model_release_tag }}
+          MODEL_ASSET_NAME: ${{ inputs.model_asset_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p .deploy/model-release .deploy/model-unzip bert/models/xhs-bert-sentiment
+          gh release download "$MODEL_RELEASE_TAG" \
+            --pattern "$MODEL_ASSET_NAME" \
+            --dir .deploy/model-release
+          unzip -q ".deploy/model-release/$MODEL_ASSET_NAME" -d .deploy/model-unzip
+
+          if [ -f ".deploy/model-unzip/config.json" ]; then
+            model_source=".deploy/model-unzip"
+          else
+            model_source="$(dirname "$(find .deploy/model-unzip -name config.json -print -quit)")"
+          fi
+
+          if [ -z "$model_source" ] || [ ! -f "$model_source/config.json" ]; then
+            echo "Could not find config.json inside model ZIP."
+            exit 1
+          fi
+
+          cp -R "$model_source"/. bert/models/xhs-bert-sentiment/
+          test -f bert/models/xhs-bert-sentiment/config.json
+          test -f bert/models/xhs-bert-sentiment/tokenizer.json
+          test -f bert/models/xhs-bert-sentiment/tokenizer_config.json
+          if [ ! -f bert/models/xhs-bert-sentiment/model.safetensors ] && [ ! -f bert/models/xhs-bert-sentiment/pytorch_model.bin ]; then
+            echo "Model ZIP must include model.safetensors or pytorch_model.bin."
+            exit 1
+          fi
+
+      - name: Type check
+        run: npm run check
+
+      - name: Worker tests
+        run: npm run test:worker
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy Worker and BERT container
+        run: npx wrangler deploy --containers-rollout=immediate

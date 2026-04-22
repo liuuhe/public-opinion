@@ -83,6 +83,11 @@ npm run deploy:bert:cf
 `BERT_CONTAINER` Durable Object 绑定让 Worker 调用容器。Worker 会优先调用
 Cloudflare 容器；如果仍保留 `BERT_INFERENCE_URL`，容器失败时会回退到外部推理地址。
 
+如果本机不想安装 Docker，可以用 GitHub Actions：先运行
+`npm run package:bert:model` 生成 `.deploy/xhs-bert-sentiment.zip`，把它上传到
+GitHub Release `bert-model`，再在 GitHub Actions 里手动运行
+`Deploy Cloudflare Containers`。
+
 推理接口兼容 Worker：
 
 ```json
