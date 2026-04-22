@@ -12,6 +12,10 @@ on:
         required: true
         default: "xhs-bert-sentiment.zip"
 
+concurrency:
+  group: deploy-cloudflare-containers
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
@@ -19,9 +23,14 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    environment:
+      name: production
+      url: https://opinion.liuhe.me
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      MODEL_RELEASE_TAG: ${{ inputs.model_release_tag }}
+      MODEL_ASSET_NAME: ${{ inputs.model_asset_name }}
 
     steps:
       - name: Checkout
@@ -39,8 +48,6 @@ jobs:
       - name: Download BERT model release asset
         env:
           GH_TOKEN: ${{ github.token }}
-          MODEL_RELEASE_TAG: ${{ inputs.model_release_tag }}
-          MODEL_ASSET_NAME: ${{ inputs.model_asset_name }}
         run: |
           set -euo pipefail
           mkdir -p .deploy/model-release .deploy/model-unzip bert/models/xhs-bert-sentiment
@@ -69,6 +76,12 @@ jobs:
             exit 1
           fi
 
+      - name: Show model package summary
+        run: |
+          set -euo pipefail
+          du -sh bert/models/xhs-bert-sentiment
+          find bert/models/xhs-bert-sentiment -maxdepth 1 -type f -printf "%f %s bytes\n" | sort
+
       - name: Type check
         run: npm run check
 
@@ -80,3 +93,26 @@ jobs:
 
       - name: Deploy Worker and BERT container
         run: npx wrangler deploy --containers-rollout=immediate
+
+      - name: Verify Worker health
+        run: |
+          set -euo pipefail
+          curl --fail --show-error --silent --retry 6 --retry-delay 10 https://opinion.liuhe.me/api/health
+
+      - name: Verify BERT container health
+        run: |
+          set -euo pipefail
+          curl --fail --show-error --silent --retry 10 --retry-delay 15 https://opinion.liuhe.me/api/bert/health
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          {
+            echo "## Cloudflare Containers deployment"
+            echo ""
+            echo "- Worker: https://opinion.liuhe.me"
+            echo "- Health: https://opinion.liuhe.me/api/health"
+            echo "- BERT health: https://opinion.liuhe.me/api/bert/health"
+            echo "- Model release tag: $MODEL_RELEASE_TAG"
+            echo "- Model asset: $MODEL_ASSET_NAME"
+          } >> "$GITHUB_STEP_SUMMARY"
