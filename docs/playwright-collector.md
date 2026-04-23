@@ -1,8 +1,16 @@
 # Xiaohongshu Playwright Collector
 
-This collector is a local fallback when the browser extension capture flow is too fragile. It writes the same capture JSON shape that the web app and `/api/analyze/captured` already accept.
+The browser extension is the preferred path for actual product use. It is more convenient because it runs in the user's normal logged-in browser session and can send captures directly to the Worker.
 
-It is intentionally conservative: one visible browser session, one post at a time, persistent login state, randomized delays, checkpoint output after each post, and stop-on-verification behavior. It does not try to bypass verification, CAPTCHAs, or platform rate limits.
+This Playwright collector is an auxiliary tool for:
+
+- adding more comments to the training dataset,
+- reproducing collection runs with a local script,
+- fallback collection when the extension is temporarily affected by page changes.
+
+It writes the same capture JSON shape accepted by the web app and `/api/analyze/captured`.
+
+The collector is intentionally conservative: one visible browser session, one post at a time, persistent login state, randomized delays, checkpoint output after each post, and stop-on-verification behavior. It does not try to bypass verification, CAPTCHAs, or platform rate limits.
 
 ## Install
 
@@ -22,7 +30,7 @@ Log in manually in the opened Chromium window, wait until Xiaohongshu is usable,
 ## Collect By Keyword
 
 ```powershell
-npm run collect:xhs -- --keyword "咖啡" --max-posts 20 --comments-per-post 80
+npm run collect:xhs -- --keyword "酒店 避雷" --max-posts 10 --comments-per-post 80
 ```
 
 Output defaults to `data/captures/xhs-playwright-<keyword>-<timestamp>.json`.
@@ -30,7 +38,7 @@ Output defaults to `data/captures/xhs-playwright-<keyword>-<timestamp>.json`.
 If you have already opened the right Xiaohongshu search result page in the Playwright browser, collect from the current page instead of constructing a new URL:
 
 ```powershell
-npm run collect:xhs -- --current-page --keyword "咖啡"
+npm run collect:xhs -- --current-page --keyword "酒店 避雷"
 ```
 
 If Xiaohongshu changes the search URL shape, copy the browser address bar URL and pass it directly:
@@ -42,7 +50,7 @@ npm run collect:xhs -- --search-url "https://www.xiaohongshu.com/search_result?k
 ## Collect From Known Note URLs
 
 ```powershell
-npm run collect:xhs -- --urls-file data/note-urls.txt --keyword "咖啡"
+npm run collect:xhs -- --urls-file data/note-urls.txt --keyword "酒店 避雷"
 ```
 
 `data/note-urls.txt` should contain one Xiaohongshu note URL per line. Blank lines and `#` comments are ignored.
@@ -52,10 +60,32 @@ npm run collect:xhs -- --urls-file data/note-urls.txt --keyword "咖啡"
 If you prefer using your normal Chrome profile, start Chrome with remote debugging enabled yourself, then run:
 
 ```powershell
-npm run collect:xhs -- --cdp http://127.0.0.1:9222 --keyword "咖啡"
+npm run collect:xhs -- --cdp http://127.0.0.1:9222 --keyword "酒店 避雷"
 ```
 
 This follows the same high-level pattern as MediaCrawler: reuse a real logged-in browser context and avoid extra reverse engineering. Keep collection small and pause when verification appears.
+
+## Dataset Use
+
+After collection, convert captures into a review CSV:
+
+```powershell
+npm run dataset:from-captures -- --input "data/captures/xhs-*.json" --output "bert/data/archive-wsl/exports/new_samples.review.csv"
+```
+
+Run LLM pre-labeling through the production Worker:
+
+```powershell
+npm run dataset:label-llm -- --input "bert/data/archive-wsl/exports/new_samples.review.csv" --output "bert/data/archive-wsl/exports/new_samples.llm.csv" --worker-url "https://opinion.liuhe.me"
+```
+
+Merge valid labels into a new training CSV:
+
+```powershell
+npm run dataset:merge -- --base "bert/data/archive-wsl/exports/train.corrected.v2.csv" --new "bert/data/archive-wsl/exports/new_samples.llm.csv" --output "bert/data/archive-wsl/exports/train.corrected.v3.csv"
+```
+
+LLM labels should be treated as pre-label candidates. A new model should not be deployed unless it beats the current frozen test baseline of `test_macro_f1 = 0.8295`.
 
 ## Useful Options
 

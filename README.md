@@ -1,10 +1,6 @@
 # Public Opinion Pipeline
 
-小红书关键词舆情分析项目。当前主流程：
-
-- 浏览器插件：复用真实登录态，搜索关键词、逐帖打开详情页、采集评论并导出 JSON。
-- Cloudflare Worker：接收插件采集 JSON，执行 LLM/BERT 情绪标注并返回报告。
-- React Web：作为插件工作台，导入 JSON、查看摘要、图表、样本和导出报告。
+小红书关键词舆情分析项目。实际使用优先走浏览器插件：在用户自己的登录态里采集帖子和评论，发送到 Cloudflare Worker 分析，再在网页端查看和导出报告。Playwright 采集器保留为补充 dataset 和备用采集方案。
 
 线上入口：
 
@@ -12,28 +8,28 @@
 https://opinion.liuhe.me
 ```
 
-## Browser Extension
+## Main Flow
 
-1. 打开 Chrome/Edge 扩展管理页，启用开发者模式。
+1. 在 Chrome/Edge 扩展管理页启用开发者模式。
 2. 选择“加载已解压的扩展程序”，目录选择 `browser-extension`。
-3. 在正常浏览器里登录小红书，打开任意小红书页面。
-4. 点击扩展，填写关键词、帖子数、每帖评论数、并发数。
-5. 点击“自动逐帖”，插件会优先使用带 `xsec_token` 的搜索结果链接采集。
-6. 采集完成后可直接“发送分析”，也可以“导出数据”后在网页工作台导入。
+3. 在正常浏览器里登录小红书，打开小红书页面。
+4. 点击扩展，填写关键词、帖子数、每帖评论数和随机延迟。
+5. 点击“自动逐帖”，插件会复用当前登录态逐帖采集评论。
+6. 采集完成后点击“发送分析”，或“导出数据”后在网页工作台导入。
+7. 在网页中查看摘要、关键发现、情绪分布、样本评论，并导出 JSON、Markdown、CSV 或 PDF。
 
-默认 Worker 地址：
+插件默认 Worker 地址保持为：
 
 ```text
 https://opinion.liuhe.me
 ```
 
-## Cloudflare Worker
+## Web App
 
-配置 LLM secret：
+网页支持两种 JSON 输入：
 
-```bash
-wrangler secret put OPENAI_API_KEY
-```
+- 插件导出的 `xhs-opinion-*-capture.json`：调用 `/api/analyze/captured` 生成新报告。
+- Worker 返回的 analysis JSON：直接渲染已生成报告，适合答辩复现和归档。
 
 本地开发与部署：
 
@@ -44,71 +40,7 @@ npm run build
 npm run deploy
 ```
 
-网页支持两种输入：
-
-- 插件导出的 `xhs-opinion-*-capture.json`：调用 `/api/analyze/captured` 生成新报告。
-- Worker 返回的 analysis JSON：直接渲染已生成报告，适合答辩复现。
-
-## BERT Mode
-
-Worker 支持两种 BERT 推理方式：优先调用 Cloudflare Containers 里的本地 BERT
-模型；如果仍配置了 `BERT_INFERENCE_URL`，则可回退到 Hugging Face Space 等外部
-HTTP 推理服务：
-
-```bash
-wrangler secret put BERT_INFERENCE_URL
-# value: https://<your-huggingface-space>.hf.space/predict
-npm run deploy
-```
-
-BERT 训练和 Hugging Face Space 推理服务在 `bert/`：
-
-```bash
-cd bert
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-python train.py --data data/seed.jsonl --output models/xhs-bert-sentiment --epochs 8
-set MODEL_DIR=models/xhs-bert-sentiment
-uvicorn app:app --host 0.0.0.0 --port 7860
-```
-
-如果要把 BERT 也部署到 Cloudflare，先安装并启动 Docker，然后在项目根目录运行：
-
-```bash
-npm run deploy:bert:cf
-```
-
-该命令会用 `bert/Dockerfile` 构建 Cloudflare Containers 镜像，并通过
-`BERT_CONTAINER` Durable Object 绑定让 Worker 调用容器。Worker 会优先调用
-Cloudflare 容器；如果仍保留 `BERT_INFERENCE_URL`，容器失败时会回退到外部推理地址。
-
-如果本机不想安装 Docker，可以用 GitHub Actions：先运行
-`npm run package:bert:model` 生成 `.deploy/xhs-bert-sentiment.zip`，把它上传到
-GitHub Release `bert-model`，再在 GitHub Actions 里手动运行
-`Deploy Cloudflare Containers`。
-
-推理接口兼容 Worker：
-
-```json
-{
-  "samples": [
-    { "sample_id": "s1", "text": "服务很耐心，下次还会去。" }
-  ]
-}
-```
-
-响应：
-
-```json
-{
-  "labels": [
-    { "sample_id": "s1", "label": "positive", "confidence": 0.91, "reason_short": "bert" }
-  ]
-}
-```
-
-## API
+## Worker API
 
 `POST /api/analyze/captured`
 
@@ -144,14 +76,108 @@ GitHub Release `bert-model`，再在 GitHub Actions 里手动运行
 }
 ```
 
+Health endpoints:
+
+```text
+GET /api/health
+GET /api/bert/health
+```
+
 `POST /api/analyze` 仅在 `LOCAL_FIXTURE_ENABLED=true` 时返回 fixture 演示报告。
 
-## Legacy
+## BERT Status
 
-旧的本地 Playwright 采集器已归档到 `legacy/playwright-collector/`。如果插件因浏览器权限或小红书页面变化不可用，可以按该目录 README 作为兜底方案。
+当前线上最佳模型先作为可交付基线：
+
+| Metric | Value |
+| --- | ---: |
+| Test macro F1 | 0.8295 |
+| Test accuracy | 0.8542 |
+| Negative F1 | 0.7727 |
+| Neutral F1 | 0.8946 |
+| Positive F1 | 0.8212 |
+
+最近的 LLM 预标注 v3 训练没有超过该基线，因此不部署、不替换线上模型。后续新模型只有在冻结测试集上超过 `test_macro_f1 = 0.8295`，才进入 ONNX export、package 和 Cloudflare Containers 部署。
+
+Cloudflare Containers 部署：
+
+```bash
+npm run deploy:bert:cf
+```
+
+如果本机不想安装 Docker，可以运行：
+
+```bash
+npm run package:bert:model
+```
+
+然后把 `.deploy/xhs-bert-sentiment.zip` 上传到 GitHub Release `bert-model`，再手动运行 GitHub Actions 里的 `Deploy Cloudflare Containers`。
+
+## Playwright Auxiliary Collector
+
+Playwright 不是日常产品入口，主要用于：
+
+- 补充训练数据。
+- 插件受页面变化影响时备用采集。
+- 需要更可控的本地采集和复现实验时使用。
+
+登录一次：
+
+```powershell
+npm run collect:xhs -- --login
+```
+
+按关键词采集：
+
+```powershell
+npm run collect:xhs -- --keyword "酒店 避雷" --max-posts 10 --comments-per-post 80
+```
+
+输出默认写入 `data/captures/`，可导入网页分析，也可进入 dataset 流水线。
+
+## Dataset Loop
+
+从 capture JSON 生成待标注样本：
+
+```powershell
+npm run dataset:from-captures -- --input "data/captures/xhs-*-001.json" --output "bert/data/archive-wsl/exports/new_samples.review.csv"
+```
+
+用 LLM 预标注：
+
+```powershell
+npm run dataset:label-llm -- --input "bert/data/archive-wsl/exports/new_samples.review.csv" --output "bert/data/archive-wsl/exports/new_samples.llm.csv" --worker-url "https://opinion.liuhe.me"
+```
+
+合并到训练集：
+
+```powershell
+npm run dataset:merge -- --base "bert/data/archive-wsl/exports/train.corrected.v2.csv" --new "bert/data/archive-wsl/exports/new_samples.llm.csv" --output "bert/data/archive-wsl/exports/train.corrected.v3.csv"
+```
+
+GPU 训练验证：
+
+```powershell
+cd bert
+.\.venv\Scripts\python.exe train.py `
+  --data data/archive-wsl/exports/train.corrected.v3.csv `
+  --eval-data data/archive-wsl/exports/val.corrected.v2.csv `
+  --test-data data/archive-wsl/exports/test.corrected.v2.csv `
+  --output models/xhs-bert-sentiment-v3 `
+  --epochs 5 `
+  --batch-size 16 `
+  --eval-batch-size 32 `
+  --learning-rate 2e-5 `
+  --warmup-ratio 0.1 `
+  --max-length 256 `
+  --seed 42 `
+  --class-weights none
+```
+
+验证集和测试集继续冻结。LLM 标签只能作为预标注候选，不能默认视为真实标签；如果新模型没有超过线上基线，不部署。
 
 ## Notes
 
 - 采集基于个人登录态和小红书个性化推荐，论文和答辩中需要说明样本偏差。
 - 若小红书要求扫码、短信或滑块验证，直接在日常浏览器中完成，再重新运行插件采集。
-- BERT 初版 seed 数据较小，建议继续追加插件导出的评论并人工标注后再训练。
+- 采集保持单线程和随机延迟，不做绕过平台风控的并发或反爬逻辑。

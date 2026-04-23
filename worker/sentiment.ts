@@ -25,6 +25,9 @@ const SYSTEM_PROMPT = `你是网络舆情情绪标注器。任务是把评论标
 
 const LLM_CHUNK_SIZE = 20;
 const LLM_CHUNK_CONCURRENCY = 3;
+const LLM_CHUNK_TIMEOUT_MS = 30_000;
+const BERT_CHUNK_SIZE = 64;
+const BERT_REQUEST_TIMEOUT_MS = 90_000;
 const BERT_CONTAINER_NAME = "xhs-bert-sentiment";
 
 interface LabelResult {
@@ -47,7 +50,7 @@ export async function labelComments(input: {
 
   const labels =
     input.engine === "bert"
-      ? await labelWithBert(input.env, comments)
+      ? await labelWithBert(input.env, comments, input.warnings)
       : await labelWithLlm(input.env, comments, input.warnings);
 
   const labelById = new Map(labels.map((label) => [label.sampleId, label]));
@@ -136,7 +139,7 @@ function postChatCompletion(
   comments: CapturedComment[],
   includeResponseFormat: boolean
 ): Promise<Response> {
-  return fetch(`${baseUrl}/chat/completions`, {
+  return fetchWithTimeout(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -145,6 +148,7 @@ function postChatCompletion(
     body: JSON.stringify({
       model: env.OPENAI_MODEL || "gpt-4o-mini",
       temperature: 0,
+      max_tokens: 3000,
       ...(includeResponseFormat ? { response_format: { type: "json_object" } } : {}),
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
@@ -164,7 +168,7 @@ function postChatCompletion(
         }
       ]
     })
-  });
+  }, LLM_CHUNK_TIMEOUT_MS);
 }
 
 function parseLlmResponse(payload: unknown): LabelResult[] {
@@ -190,7 +194,7 @@ function parseLlmResponse(payload: unknown): LabelResult[] {
     .filter((row): row is LabelResult => Boolean(row));
 }
 
-async function labelWithBert(env: Env, comments: CapturedComment[]): Promise<LabelResult[]> {
+async function labelWithBert(env: Env, comments: CapturedComment[], warnings: string[]): Promise<LabelResult[]> {
   if (!hasBertInference(env)) {
     throw new ApiError(
       400,
@@ -199,6 +203,40 @@ async function labelWithBert(env: Env, comments: CapturedComment[]): Promise<Lab
     );
   }
 
+  if (env.BERT_CONTAINER) {
+    try {
+      const health = await fetchBertContainer(env, "/health", undefined, BERT_REQUEST_TIMEOUT_MS);
+      if (health && !health.ok) {
+        warnings.push(`BERT 容器健康检查返回 ${health.status}，将继续尝试推理。`);
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      warnings.push(`BERT 容器冷启动健康检查超时或失败，将继续尝试推理：${detail}`);
+    }
+  }
+
+  const chunks = chunkArray(comments, BERT_CHUNK_SIZE);
+  const results: LabelResult[] = [];
+  for (const [index, chunk] of chunks.entries()) {
+    try {
+      results.push(...(await labelBertChunk(env, chunk)));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      warnings.push(`BERT 第 ${index + 1}/${chunks.length} 批推理失败，${chunk.length} 条评论已使用本地保守兜底：${detail}`);
+      results.push(...chunk.map(heuristicLabel));
+    }
+  }
+
+  const labeledIds = new Set(results.map((result) => result.sampleId));
+  const missing = comments.filter((comment) => !labeledIds.has(comment.sampleId));
+  if (missing.length > 0) {
+    warnings.push(`BERT 返回缺少 ${missing.length} 条样本，已对缺失样本使用保守兜底。`);
+    results.push(...missing.map(heuristicLabel));
+  }
+  return results;
+}
+
+async function labelBertChunk(env: Env, comments: CapturedComment[]): Promise<LabelResult[]> {
   const requestInit = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -210,9 +248,9 @@ async function labelWithBert(env: Env, comments: CapturedComment[]): Promise<Lab
     })
   };
 
-  let response = env.BERT_CONTAINER ? await fetchBertContainer(env, "/predict", requestInit) : null;
+  let response = env.BERT_CONTAINER ? await fetchBertContainer(env, "/predict", requestInit, BERT_REQUEST_TIMEOUT_MS) : null;
   if (!response?.ok && env.BERT_INFERENCE_URL) {
-    response = await fetch(env.BERT_INFERENCE_URL, requestInit);
+    response = await fetchWithTimeout(env.BERT_INFERENCE_URL, requestInit, BERT_REQUEST_TIMEOUT_MS);
   }
   if (!response) {
     throw new ApiError(502, "BERT inference unavailable", "No Cloudflare Container response and no BERT_INFERENCE_URL fallback.");
@@ -237,13 +275,39 @@ export function hasBertInference(env: Env): boolean {
 export async function fetchBertContainer(
   env: Env,
   pathname: string,
-  init?: RequestInit
+  init?: RequestInit,
+  timeoutMs = BERT_REQUEST_TIMEOUT_MS
 ): Promise<Response | null> {
   if (!env.BERT_CONTAINER) {
     return null;
   }
   const container = env.BERT_CONTAINER.getByName(BERT_CONTAINER_NAME);
-  return container.fetch(new Request(`http://bert.local${pathname}`, init));
+  return withTimeout(container.fetch(new Request(`http://bert.local${pathname}`, init)), timeoutMs, `BERT container ${pathname} timed out`);
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  });
 }
 
 function normalizeLabelRow(row: unknown): LabelResult | null {

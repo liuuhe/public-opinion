@@ -1,5 +1,20 @@
-import { useMemo, useState, type DragEvent } from "react";
-import { AlertCircle, BarChart3, CheckCircle2, Database, Download, FileDown, FileJson, FileText, Lightbulb, MessageCircle, Radar, Upload } from "lucide-react";
+import { useEffect, useMemo, useState, type DragEvent } from "react";
+import {
+  Activity,
+  AlertCircle,
+  BarChart3,
+  CheckCircle2,
+  Database,
+  Download,
+  FileDown,
+  FileJson,
+  FileText,
+  Lightbulb,
+  MessageCircle,
+  Radar,
+  Terminal,
+  Upload
+} from "lucide-react";
 import { Bar, BarChart, Cell, Pie, PieChart, Tooltip, XAxis, YAxis } from "recharts";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -19,7 +34,32 @@ const DEFAULT_WORKER_URL = "https://opinion.liuhe.me";
 const LLM_CHUNK_SIZE = 20;
 const LLM_CHUNK_CONCURRENCY = 3;
 const ESTIMATED_WAVE_SECONDS = 8;
+const BERT_CHUNK_SIZE = 64;
+const BERT_ESTIMATED_CHUNK_SECONDS = 14;
+const BEST_MODEL_TEST_MACRO_F1 = "0.8295";
+const ANALYSIS_REQUEST_TIMEOUT_MS = 150_000;
+const BERT_WARMUP_TIMEOUT_MS = 90_000;
 type ExportFormat = "json" | "csv" | "markdown" | "pdf";
+
+type ServiceHealthState = {
+  worker?: {
+    ok?: boolean;
+    llmConfigured?: boolean;
+    bertConfigured?: boolean;
+    bertProvider?: string;
+    model?: string;
+  };
+  bert?: {
+    ok?: boolean;
+    runtime?: string;
+    onnxModelFile?: string;
+    modelFile?: string;
+    model_file?: string;
+    model?: string;
+  };
+  isLoading: boolean;
+  error: string;
+};
 
 const LABEL_META: Record<SentimentLabel, { name: string; description: string; color: string; badgeClass: string }> = {
   positive: {
@@ -54,6 +94,33 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [processingStatus, setProcessingStatus] = useState("");
   const [processingProgress, setProcessingProgress] = useState(0);
+  const [health, setHealth] = useState<ServiceHealthState>({ isLoading: false, error: "" });
+
+  useEffect(() => {
+    void refreshServiceHealth();
+  }, []);
+
+  async function refreshServiceHealth() {
+    setHealth((current) => ({ ...current, isLoading: true, error: "" }));
+    try {
+      const baseUrl = apiBaseUrl(workerUrl);
+      const [workerResponse, bertResponse] = await Promise.all([fetch(`${baseUrl}/api/health`), fetch(`${baseUrl}/api/bert/health`)]);
+      const workerPayload = await workerResponse.json();
+      const bertPayload = await bertResponse.json();
+      if (!workerResponse.ok) {
+        throw new Error(workerPayload.error || "Worker health check failed");
+      }
+      if (!bertResponse.ok) {
+        throw new Error(bertPayload.error || "BERT health check failed");
+      }
+      setHealth({ worker: workerPayload, bert: bertPayload, isLoading: false, error: "" });
+    } catch (healthError) {
+      setHealth({
+        isLoading: false,
+        error: healthError instanceof Error ? healthError.message : "服务状态检查失败"
+      });
+    }
+  }
 
   async function handleFileUpload(file: File | undefined) {
     if (!file) {
@@ -88,29 +155,37 @@ function App() {
         return;
       }
       const stats = summarizeCapturePayload(payload);
-      const initialProgress = estimateAnalysisProgress(stats.comments, 0);
+      const selectedEngine = engine;
+      const initialProgress = estimateAnalysisProgress(selectedEngine, stats.comments, 0);
       setProcessingProgress(initialProgress.percent);
-      setProcessingStatus(
-        `已识别为插件采集 JSON：${stats.posts} 篇帖子、${stats.comments} 条评论，共 ${initialProgress.totalBatches} 批。正在发送 Worker 重新分析...`
-      );
+      setProcessingStatus(buildAnalysisProgressMessage(selectedEngine, stats, initialProgress, 0, "start"));
+
+      if (selectedEngine === "bert") {
+        try {
+          setProcessingProgress(12);
+          setProcessingStatus(`已识别为插件采集 JSON：${stats.posts} 篇帖子、${stats.comments} 条评论。正在唤醒 BERT 容器，首次请求可能需要几十秒...`);
+          await fetchWithTimeout(`${apiBaseUrl(workerUrl)}/api/bert/health`, BERT_WARMUP_TIMEOUT_MS);
+        } catch {
+          setProcessingStatus("BERT 容器健康检查未及时返回，继续提交分析请求；如果容器正在冷启动，本次可能会稍慢。");
+        }
+      }
+
       const startedAt = Date.now();
       progressTimer = setInterval(() => {
         const elapsed = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
-        const progress = estimateAnalysisProgress(stats.comments, elapsed);
+        const progress = estimateAnalysisProgress(selectedEngine, stats.comments, elapsed);
         setProcessingProgress(progress.percent);
-        setProcessingStatus(
-          `Worker 正在分析，预计处理第 ${progress.startComment}-${progress.endComment} 条评论（第 ${progress.startBatch}-${progress.endBatch}/${progress.totalBatches} 批，最多 ${LLM_CHUNK_CONCURRENCY} 批并发），已等待 ${elapsed} 秒。`
-        );
+        setProcessingStatus(buildAnalysisProgressMessage(selectedEngine, stats, progress, elapsed, "running"));
       }, 1000);
       const requestPayload: ClientCapturedAnalyzeRequest = {
         keyword: String(payload.keyword || keyword),
-        engine,
+        engine: selectedEngine,
         maxPosts,
         commentsPerPost,
         pageUrl: String(payload.pageUrl || ""),
         posts: Array.isArray(payload.posts) ? payload.posts : []
       };
-      const response = await fetch(`${apiBaseUrl(workerUrl)}/api/analyze/captured`, {
+      const response = await fetchWithTimeout(`${apiBaseUrl(workerUrl)}/api/analyze/captured`, ANALYSIS_REQUEST_TIMEOUT_MS, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestPayload)
@@ -123,7 +198,11 @@ function App() {
       setProcessingStatus(`分析完成：${analysis.totals?.validSamples || 0} 条有效样本。`);
       setResult(analysis as AnalysisResponse);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "JSON 解析或分析失败");
+      if (requestError instanceof DOMException && requestError.name === "AbortError") {
+        setError("分析请求超过 150 秒仍未返回。若使用 BERT，这通常是容器冷启动或单批推理耗时过长；建议先刷新线上服务状态后重试，或减少本次评论数。");
+      } else {
+        setError(requestError instanceof Error ? requestError.message : "JSON 解析或分析失败");
+      }
     } finally {
       if (progressTimer) {
         clearInterval(progressTimer);
@@ -219,7 +298,7 @@ function App() {
               <ol className="text-muted-foreground mt-2 grid gap-1 text-sm leading-6">
                 <li>1. 在浏览器扩展页重新加载 <code>browser-extension</code>。</li>
                 <li>2. 打开已登录的小红书页面，填写关键词、帖子数、每帖评论和随机延迟。</li>
-                <li>3. 点击插件里的“自动逐帖”，完成后可直接发送分析或导出 JSON。</li>
+                <li>3. 点击插件里的“自动逐帖”，完成后可直接发送 Worker 分析或导出 JSON。</li>
                 <li>4. 把插件导出的 capture JSON 拖到右侧，网页会生成可导出的报告。</li>
               </ol>
             </div>
@@ -251,6 +330,12 @@ function App() {
             {processingStatus && <p className="text-muted-foreground text-sm leading-6">{processingStatus}</p>}
           </CardContent>
         </Card>
+      </section>
+
+      <section className="grid gap-5 lg:grid-cols-3">
+        <ServiceStatusPanel health={health} onRefresh={() => void refreshServiceHealth()} />
+        <ModelBaselinePanel />
+        <PlaywrightFallbackPanel />
       </section>
 
       {error && (
@@ -287,7 +372,7 @@ function HeroCard() {
             插件采集评论，云端生成小红书舆情报告。
           </CardTitle>
           <CardDescription className="mt-3 max-w-3xl text-sm leading-6">
-            浏览器插件复用真实登录态提取帖子和评论，Cloudflare Worker 负责情绪标注、摘要、关键发现和建议动作。导出的 JSON 可以在这里复盘、二次分析和归档。
+            实际使用优先通过浏览器插件采集和发送分析。Playwright 保留给批量补充 dataset、复现采集过程和插件受页面变化影响时的备用采集。
           </CardDescription>
         </div>
         <div className="grid gap-2 sm:grid-cols-3 md:grid-cols-1">
@@ -297,6 +382,95 @@ function HeroCard() {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function ServiceStatusPanel({ health, onRefresh }: { health: ServiceHealthState; onRefresh: () => void }) {
+  const bertModelFile = health.bert?.onnxModelFile || health.bert?.modelFile || health.bert?.model_file || health.bert?.model || "model.onnx";
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Activity className="size-5 text-primary" />
+          线上服务状态
+        </CardTitle>
+        <CardDescription>检查 Worker、LLM 和 BERT 容器是否处于可用状态。</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        {health.error && (
+          <Alert variant="destructive">
+            <AlertCircle />
+            <AlertTitle>状态检查失败</AlertTitle>
+            <AlertDescription>{health.error}</AlertDescription>
+          </Alert>
+        )}
+        <StatusRow label="Worker" value={health.worker?.ok ? "可用" : health.isLoading ? "检查中" : "未知"} ok={Boolean(health.worker?.ok)} />
+        <StatusRow label="LLM" value={health.worker?.llmConfigured ? health.worker.model || "已配置" : "未配置"} ok={Boolean(health.worker?.llmConfigured)} />
+        <StatusRow label="BERT" value={health.worker?.bertProvider || "未知"} ok={Boolean(health.worker?.bertConfigured)} />
+        <StatusRow label="Runtime" value={health.bert?.runtime || bertModelFile || "未知"} ok={Boolean(health.bert?.ok || health.bert?.runtime)} />
+        <Button type="button" variant="outline" onClick={onRefresh} disabled={health.isLoading}>
+          {health.isLoading ? "检查中..." : "刷新状态"}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ModelBaselinePanel() {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <CheckCircle2 className="size-5 text-primary" />
+          当前模型基线
+        </CardTitle>
+        <CardDescription>线上模型已经足够支撑演示和实际分析，后续部署必须先超过冻结测试集基线。</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        <div className="rounded-lg border bg-background/70 p-4">
+          <p className="text-muted-foreground text-sm">线上最佳 test macro F1</p>
+          <p className="mt-1 text-3xl font-semibold tracking-tight">{BEST_MODEL_TEST_MACRO_F1}</p>
+        </div>
+        <p className="text-muted-foreground text-sm leading-6">
+          最近的 LLM 预标注 v3 训练未超过该基线，因此不建议替换线上模型。下一轮模型优化应先提升标签质量，尤其是负向评论与中性评论的边界。
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PlaywrightFallbackPanel() {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Terminal className="size-5 text-primary" />
+          Playwright 辅助采集
+        </CardTitle>
+        <CardDescription>不作为日常产品入口，主要用于补充训练数据和备用采集。</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        <pre className="overflow-x-auto rounded-lg border bg-muted/40 p-3 text-xs leading-6">
+          <code>{'npm run collect:xhs -- --keyword "酒店 避雷" --max-posts 10 --comments-per-post 80'}</code>
+        </pre>
+        <p className="text-muted-foreground text-sm leading-6">
+          采集结果会写入 <code>data/captures/</code>，可导入本页分析，也可进入 dataset 预标注和训练验证流水线。
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function StatusRow({ label, value, ok }: { label: string; value: string; ok: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg border bg-background/70 px-3 py-2 text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="flex min-w-0 items-center gap-2 font-medium">
+        <span className={ok ? "size-2 rounded-full bg-emerald-500" : "size-2 rounded-full bg-amber-500"} />
+        <span className="truncate">{value}</span>
+      </span>
+    </div>
   );
 }
 
@@ -699,7 +873,11 @@ function summarizeCapturePayload(value: Partial<ClientCapturedAnalyzeRequest & A
   };
 }
 
-function estimateAnalysisProgress(totalComments: number, elapsedSeconds: number) {
+function estimateAnalysisProgress(engine: AnalysisEngine, totalComments: number, elapsedSeconds: number) {
+  return engine === "bert" ? estimateBertAnalysisProgress(totalComments, elapsedSeconds) : estimateLlmAnalysisProgress(totalComments, elapsedSeconds);
+}
+
+function estimateLlmAnalysisProgress(totalComments: number, elapsedSeconds: number) {
   const safeTotal = Math.max(0, totalComments);
   const totalBatches = Math.max(1, Math.ceil(safeTotal / LLM_CHUNK_SIZE));
   const totalWaves = Math.max(1, Math.ceil(totalBatches / LLM_CHUNK_CONCURRENCY));
@@ -717,6 +895,55 @@ function estimateAnalysisProgress(totalComments: number, elapsedSeconds: number)
     endComment,
     percent
   };
+}
+
+function estimateBertAnalysisProgress(totalComments: number, elapsedSeconds: number) {
+  const safeTotal = Math.max(0, totalComments);
+  const totalBatches = Math.max(1, Math.ceil(safeTotal / BERT_CHUNK_SIZE));
+  const currentBatch = Math.min(totalBatches, Math.floor(elapsedSeconds / BERT_ESTIMATED_CHUNK_SECONDS) + 1);
+  const startComment = safeTotal === 0 ? 0 : (currentBatch - 1) * BERT_CHUNK_SIZE + 1;
+  const endComment = Math.min(safeTotal, currentBatch * BERT_CHUNK_SIZE);
+  const percent = Math.min(95, Math.max(12, Math.round((currentBatch / totalBatches) * 86)));
+  return {
+    totalBatches,
+    startBatch: currentBatch,
+    endBatch: currentBatch,
+    startComment,
+    endComment,
+    percent
+  };
+}
+
+function buildAnalysisProgressMessage(
+  engine: AnalysisEngine,
+  stats: { posts: number; comments: number },
+  progress: ReturnType<typeof estimateAnalysisProgress>,
+  elapsedSeconds: number,
+  phase: "start" | "running"
+) {
+  if (engine === "bert") {
+    if (phase === "start") {
+      return `已识别为插件采集 JSON：${stats.posts} 篇帖子、${stats.comments} 条评论。BERT 会先唤醒容器，再按约 ${BERT_CHUNK_SIZE} 条一批推理。`;
+    }
+    return `BERT 容器正在推理，预计处理第 ${progress.startComment}-${progress.endComment} 条评论（第 ${progress.startBatch}/${progress.totalBatches} 批）。首次冷启动可能较慢，已等待 ${elapsedSeconds} 秒。`;
+  }
+  if (phase === "start") {
+    return `已识别为插件采集 JSON：${stats.posts} 篇帖子、${stats.comments} 条评论，共 ${progress.totalBatches} 批。正在发送 Worker 重新分析...`;
+  }
+  return `Worker 正在分析，预计处理第 ${progress.startComment}-${progress.endComment} 条评论（第 ${progress.startBatch}-${progress.endBatch}/${progress.totalBatches} 批，最多 ${LLM_CHUNK_CONCURRENCY} 批并发），已等待 ${elapsedSeconds} 秒。`;
+}
+
+async function fetchWithTimeout(url: string, timeoutMs: number, init?: RequestInit) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function getDominantBucket(distribution: AnalysisResponse["distribution"]): SentimentBucket {
