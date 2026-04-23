@@ -27,6 +27,18 @@ npm run collect:xhs -- --keyword "咖啡" --max-posts 20 --comments-per-post 80
 
 Output defaults to `data/captures/xhs-playwright-<keyword>-<timestamp>.json`.
 
+If you have already opened the right Xiaohongshu search result page in the Playwright browser, collect from the current page instead of constructing a new URL:
+
+```powershell
+npm run collect:xhs -- --current-page --keyword "咖啡"
+```
+
+If Xiaohongshu changes the search URL shape, copy the browser address bar URL and pass it directly:
+
+```powershell
+npm run collect:xhs -- --search-url "https://www.xiaohongshu.com/search_result?keyword=..."
+```
+
 ## Collect From Known Note URLs
 
 ```powershell

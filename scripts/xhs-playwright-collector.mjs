@@ -51,8 +51,12 @@ async function main() {
     return;
   }
 
+  if (!options.keyword && options.searchUrl) {
+    options.keyword = keywordFromSearchUrl(options.searchUrl);
+  }
+
   if (!options.login && !options.keyword && !options.urlsFile) {
-    throw new Error("Missing --keyword or --urls-file. Use --help for examples.");
+    throw new Error("Missing --keyword, --search-url, or --urls-file. Use --help for examples.");
   }
 
   const session = await openBrowserSession(options);
@@ -73,9 +77,11 @@ function parseArgs(argv) {
   const options = {
     keyword: "",
     urlsFile: "",
+    searchUrl: "",
     output: "",
     userDataDir: DEFAULT_USER_DATA_DIR,
     cdpEndpoint: "",
+    currentPage: false,
     headless: false,
     keepOpen: false,
     login: false,
@@ -103,6 +109,9 @@ function parseArgs(argv) {
         break;
       case "--urls-file":
         options.urlsFile = nextValue();
+        break;
+      case "--search-url":
+        options.searchUrl = nextValue();
         break;
       case "--output":
       case "-o":
@@ -148,6 +157,9 @@ function parseArgs(argv) {
       case "--keep-open":
         options.keepOpen = true;
         break;
+      case "--current-page":
+        options.currentPage = true;
+        break;
       case "--login":
         options.login = true;
         break;
@@ -177,6 +189,8 @@ Examples:
   npm run collect:xhs -- --login
   npm run collect:xhs -- --keyword "咖啡" --max-posts 20 --comments-per-post 80
   npm run collect:xhs -- --urls-file data/note-urls.txt --keyword "咖啡"
+  npm run collect:xhs -- --current-page --keyword "咖啡"
+  npm run collect:xhs -- --search-url "https://www.xiaohongshu.com/search_result?keyword=..."
   npm run collect:xhs -- --cdp http://127.0.0.1:9222 --keyword "咖啡"
 
 Notes:
@@ -240,7 +254,7 @@ async function collect(context, options) {
   const outputPath = path.resolve(options.output || defaultOutputPath(options.keyword || "xhs"));
   await mkdir(path.dirname(outputPath), { recursive: true });
 
-  const sourcePageUrl = options.keyword ? buildSearchUrl(options.keyword) : "";
+  let sourcePageUrl = options.searchUrl || (options.keyword ? buildSearchUrl(options.keyword) : "");
   const candidates = await loadInitialCandidates(options);
   const warnings = [];
   let searchTitle = "";
@@ -248,12 +262,7 @@ async function collect(context, options) {
   const searchPage = await reuseOrCreatePage(context);
   if (options.keyword) {
     const recorder = attachResponseRecorder(searchPage, options.networkPayloadLimit);
-    console.log(`[search] ${sourcePageUrl}`);
-    await searchPage.goto(sourcePageUrl, {
-      waitUntil: "domcontentloaded",
-      timeout: options.navigationTimeoutMs
-    });
-    await delay(randomDelayMs(options));
+    sourcePageUrl = await openSearchPageForKeyword(searchPage, options, sourcePageUrl);
     searchTitle = await safeTitle(searchPage);
     await assertPageAllowed(searchPage);
 
@@ -261,7 +270,7 @@ async function collect(context, options) {
       await expandVisibleText(searchPage);
       const domPosts = await extractDomPosts(searchPage);
       const networkPosts = normalizeNetworkPayloads(recorder.payloads.map((item) => item.payload));
-      mergeCandidates(candidates, [...networkPosts, ...domPosts], options.maxPosts * 3);
+      mergeCandidates(candidates, [...domPosts, ...networkPosts], options.maxPosts * 5);
       console.log(`[search] round=${round + 1} candidates=${candidates.length}`);
       if (candidates.length >= options.maxPosts) {
         break;
@@ -435,6 +444,58 @@ function attachResponseRecorder(page, limit) {
   };
 }
 
+async function openSearchPageForKeyword(page, options, sourcePageUrl) {
+  const currentUrl = page.url();
+  if (options.currentPage) {
+    if (!isXhsSearchPage(currentUrl)) {
+      throw new Error(`--current-page requires an opened Xiaohongshu search page. Current URL: ${currentUrl}`);
+    }
+    console.log(`[search] using current page ${currentUrl}`);
+    await waitForSearchResultsReady(page, options.keyword, 8000);
+    return currentUrl;
+  }
+
+  if (isSearchPageForKeyword(currentUrl, options.keyword)) {
+    console.log(`[search] already on keyword page ${currentUrl}`);
+    await waitForSearchResultsReady(page, options.keyword, 8000);
+    return currentUrl;
+  }
+
+  console.log(`[search] ${sourcePageUrl}`);
+  await page.goto(sourcePageUrl, {
+    waitUntil: "domcontentloaded",
+    timeout: options.navigationTimeoutMs
+  });
+  await waitForSearchResultsReady(page, options.keyword, options.navigationTimeoutMs);
+  return page.url();
+}
+
+async function waitForSearchResultsReady(page, keyword, timeoutMs) {
+  const start = Date.now();
+  let lastUrl = page.url();
+  while (Date.now() - start < timeoutMs) {
+    lastUrl = page.url();
+    if (isSearchPageForKeyword(lastUrl, keyword) || (isXhsSearchPage(lastUrl) && await pageHasSearchContent(page))) {
+      await delay(900);
+      return;
+    }
+    await delay(300);
+  }
+  throw new Error(`Keyword search page did not become ready. Current URL: ${lastUrl}`);
+}
+
+async function pageHasSearchContent(page) {
+  try {
+    return await page.evaluate(() => {
+      const text = document.body?.innerText || "";
+      const links = Array.from(document.querySelectorAll("a[href]"));
+      return text.includes("搜索") || links.some((anchor) => /\/(?:explore|discovery\/item|search_result)\//.test(anchor.getAttribute("href") || ""));
+    });
+  } catch {
+    return false;
+  }
+}
+
 async function extractDomPosts(page) {
   return page.evaluate(() => {
     const currentUrl = location.href;
@@ -462,7 +523,7 @@ async function extractDomPosts(page) {
       posts.push({
         postId,
         url: normalizeExtractedPostUrl(href, postId),
-        title: cleanText(anchor.getAttribute("aria-label") || anchor.textContent || "小红书帖子").slice(0, 120),
+        title: cleanText(anchor.getAttribute("aria-label") || anchor.textContent || "").slice(0, 120),
         description: "",
         authorHash: "playwright-dom-author",
         tags: [],
@@ -550,11 +611,20 @@ async function extractDomPosts(page) {
           merged.set(post.postId, { ...post, comments: dedupeComments(post.comments || []) });
           continue;
         }
-        existing.title ||= post.title;
+        if (post.title && (!existing.title || existing.title === "小红书帖子")) {
+          existing.title = post.title;
+        }
         existing.description ||= post.description;
+        if (shouldPreferPostUrl(post.url, existing.url)) {
+          existing.url = post.url;
+        }
         existing.comments = dedupeComments([...(existing.comments || []), ...(post.comments || [])]);
       }
       return Array.from(merged.values());
+    }
+
+    function shouldPreferPostUrl(nextUrl, currentUrl) {
+      return Boolean(nextUrl && (!currentUrl || (!currentUrl.includes("xsec_token=") && nextUrl.includes("xsec_token="))));
     }
 
     function dedupeComments(comments) {
@@ -768,18 +838,22 @@ function walk(value, visitor, depth = 0) {
 }
 
 function mergeCandidates(candidates, posts, limit) {
-  const seen = new Set(candidates.map((post) => post.postId || getPostIdFromUrl(post.url)));
   for (const post of posts) {
     const postId = post.postId || getPostIdFromUrl(post.url);
-    if (!postId || seen.has(postId)) {
+    if (!postId) {
       continue;
     }
-    seen.add(postId);
-    candidates.push({
+    const normalizedPost = {
       ...post,
       postId,
       url: normalizeCandidateUrl(post)
-    });
+    };
+    const existingIndex = candidates.findIndex((candidate) => (candidate.postId || getPostIdFromUrl(candidate.url)) === postId);
+    if (existingIndex >= 0) {
+      candidates[existingIndex] = mergePost(candidates[existingIndex], normalizedPost);
+      continue;
+    }
+    candidates.push(normalizedPost);
     if (candidates.length >= limit) {
       break;
     }
@@ -805,7 +879,7 @@ function mergePosts(posts) {
 function mergePost(left, right) {
   return {
     ...left,
-    title: left.title || right.title,
+    title: right.title && (!left.title || left.title === "小红书帖子") ? right.title : left.title,
     description: left.description || right.description,
     url: shouldPreferPostUrl(right.url, left.url) ? right.url : left.url,
     authorHash: left.authorHash || right.authorHash,
@@ -918,10 +992,37 @@ function shouldPreferPostUrl(nextUrl, currentUrl) {
 }
 
 function buildSearchUrl(keyword) {
-  const url = new URL(`https://${XHS_HOST}/search_result`);
-  url.searchParams.set("keyword", keyword);
-  url.searchParams.set("source", "web_search_result_notes");
-  return url.href;
+  return `https://${XHS_HOST}/search_result?keyword=${encodeURIComponent(keyword)}&source=web_search_result_notes`;
+}
+
+function isSearchPageForKeyword(pageUrl, keyword) {
+  try {
+    const url = new URL(pageUrl);
+    if (!isXhsSearchPage(url.href)) {
+      return false;
+    }
+    const pageKeyword = decodeText(url.searchParams.get("keyword") || "").replace(/\+/g, " ");
+    return !keyword || pageKeyword === keyword;
+  } catch {
+    return false;
+  }
+}
+
+function isXhsSearchPage(pageUrl) {
+  try {
+    const url = new URL(pageUrl);
+    return url.hostname === XHS_HOST && url.pathname.startsWith("/search_result");
+  } catch {
+    return false;
+  }
+}
+
+function keywordFromSearchUrl(pageUrl) {
+  try {
+    return decodeText(new URL(pageUrl).searchParams.get("keyword") || "").replace(/\+/g, " ");
+  } catch {
+    return "";
+  }
 }
 
 function defaultOutputPath(keyword) {
