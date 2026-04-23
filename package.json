@@ -11,6 +11,7 @@
     "deploy:bert": "powershell -ExecutionPolicy Bypass -File scripts/deploy-bert-space.ps1",
     "deploy:bert:cf": "npm run build && wrangler deploy --containers-rollout=immediate",
     "package:bert:model": "powershell -ExecutionPolicy Bypass -File scripts/package-bert-model.ps1",
+    "collect:xhs": "node scripts/xhs-playwright-collector.mjs",
     "check": "tsc -b",
     "test:worker": "vitest run --config vitest.config.ts"
   },
@@ -40,6 +41,7 @@
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
+    "playwright": "^1.59.1",
     "tailwindcss": "^4.2.2",
     "typescript": "^5.9.3",
     "vite": "^7.3.0",
