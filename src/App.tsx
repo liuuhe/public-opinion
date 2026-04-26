@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type DragEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import {
   AlertCircle,
   BarChart3,
@@ -353,6 +353,7 @@ function MediaCrawlerPanel({
   const [headless, setHeadless] = useState(false);
   const [status, setStatus] = useState<MediaCrawlerStatus>({ running: false, status: "idle", logs: [] });
   const [collectorError, setCollectorError] = useState("");
+  const lastLoadedCapturePathRef = useRef("");
 
   useEffect(() => {
     if (!status.running) {
@@ -363,6 +364,17 @@ function MediaCrawlerPanel({
     }, 1500);
     return () => window.clearInterval(timer);
   }, [status.running]);
+
+  useEffect(() => {
+    if (!status.capturePath || status.running) {
+      return;
+    }
+    if (lastLoadedCapturePathRef.current === status.capturePath) {
+      return;
+    }
+    lastLoadedCapturePathRef.current = status.capturePath;
+    void loadCapture(status.capturePath, true);
+  }, [status.capturePath, status.running]);
 
   async function refreshStatus() {
     const response = await fetch(`${apiBaseUrl()}/api/mediacrawler/status`);
@@ -404,13 +416,15 @@ function MediaCrawlerPanel({
     }
   }
 
-  async function loadCapture() {
-    if (!status.capturePath) {
+  async function loadCapture(capturePath = status.capturePath, silent = false) {
+    if (!capturePath) {
       return;
     }
-    setCollectorError("");
+    if (!silent) {
+      setCollectorError("");
+    }
     try {
-      const response = await fetch(`${apiBaseUrl()}/api/mediacrawler/capture?path=${encodeURIComponent(status.capturePath)}`);
+      const response = await fetch(`${apiBaseUrl()}/api/mediacrawler/capture?path=${encodeURIComponent(capturePath)}`);
       const payload = await response.json();
       if (!response.ok) {
         throw new Error(payload.error || "读取 capture JSON 失败");
@@ -455,7 +469,7 @@ function MediaCrawlerPanel({
             刷新日志
           </Button>
           <Button type="button" variant="outline" onClick={() => void loadCapture()} disabled={!status.capturePath}>
-            载入结果
+            重新载入结果
           </Button>
         </div>
         {collectorError && (
@@ -472,7 +486,7 @@ function MediaCrawlerPanel({
           </p>
           {status.running && <p className="text-muted-foreground mt-1 text-xs">如果日志提示等待浏览器，请切到自动打开的 Chrome/Edge 窗口完成小红书登录。</p>}
           {status.targetPath && <p className="text-muted-foreground mt-1 break-all text-xs">导出位置：{status.targetPath}</p>}
-          {status.capturePath && <p className="text-muted-foreground mt-1 break-all text-xs">{status.capturePath}</p>}
+          {status.capturePath && <p className="text-muted-foreground mt-1 break-all text-xs">已自动转换并载入：{status.capturePath}</p>}
         </div>
         <ScrollArea className="h-56 max-w-full overflow-hidden rounded-lg border bg-muted/30 p-3">
           <pre className="max-w-full whitespace-pre-wrap break-words font-mono text-xs leading-5">{status.logs.length ? status.logs.join("\n") : "等待采集任务..."}</pre>
