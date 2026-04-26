@@ -3,6 +3,7 @@ import {
   AlertCircle,
   BarChart3,
   CheckCircle2,
+  Clock3,
   Database,
   Download,
   FileDown,
@@ -27,7 +28,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import type { AnalysisResponse, ClientCapturedAnalyzeRequest, LabeledSample, SentimentBucket, SentimentLabel } from "./shared/types";
+import type { AnalysisPipelineTiming, AnalysisResponse, ClientCapturedAnalyzeRequest, LabeledSample, SentimentBucket, SentimentLabel } from "./shared/types";
 
 const BERT_CHUNK_SIZE = 64;
 const BERT_ESTIMATED_CHUNK_SECONDS = 14;
@@ -85,6 +86,13 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [processingStatus, setProcessingStatus] = useState("");
   const [processingProgress, setProcessingProgress] = useState(0);
+  const [, setPipelineTiming] = useState<AnalysisPipelineTiming | null>(null);
+  const pipelineTimingRef = useRef<AnalysisPipelineTiming | null>(null);
+
+  function replacePipelineTiming(next: AnalysisPipelineTiming | null) {
+    pipelineTimingRef.current = next;
+    setPipelineTiming(next);
+  }
 
   async function handleFileUpload(file: File | undefined) {
     if (!file) {
@@ -95,6 +103,8 @@ function App() {
     setProcessingProgress(0);
 
     if (isMediaCrawlerRawFile(file.name)) {
+      const importStartedAt = new Date().toISOString();
+      const importStartedMs = Date.now();
       setIsLoading(true);
       setProcessingStatus(`正在把 ${file.name} 转换成 capture JSON...`);
       try {
@@ -114,8 +124,22 @@ function App() {
         if (!response.ok) {
           throw new Error(payload.error || "导入 MediaCrawler 原始文件失败");
         }
+        const importFinishedAt = new Date().toISOString();
+        const nextTiming = normalizePipelineTiming({
+          workflowStartedAt: importStartedAt,
+          workflowFinishedAt: importFinishedAt,
+          importStartedAt,
+          importFinishedAt,
+          importMs: Math.max(1, Date.now() - importStartedMs)
+        });
+        replacePipelineTiming(nextTiming);
+        setResult(null);
         setJsonText(JSON.stringify(payload.capture, null, 2));
-        setProcessingStatus(`已从 ${file.name} 转换出 capture JSON，输出到 ${payload.outputPath}。点击“用本地 BERT 生成报告”继续。`);
+        setProcessingStatus(
+          `已从 ${file.name} 转换出 capture JSON，输出到 ${payload.outputPath}。导入转换耗时 ${formatDurationShort(
+            nextTiming?.importMs
+          )}，点击“用本地 BERT 生成报告”继续。`
+        );
       } catch (uploadError) {
         setError(uploadError instanceof Error ? uploadError.message : "导入 MediaCrawler 原始文件失败");
       } finally {
@@ -124,6 +148,8 @@ function App() {
       return;
     }
 
+    replacePipelineTiming(null);
+    setResult(null);
     setJsonText(text);
     setProcessingStatus(`已载入 ${file.name}，点击“用本地 BERT 生成报告”开始处理。`);
   }
@@ -141,12 +167,15 @@ function App() {
     setProcessingStatus("");
     setProcessingProgress(5);
     setIsLoading(true);
+    const analysisStartedAt = new Date().toISOString();
+    const analysisStartedMs = Date.now();
     let progressTimer: ReturnType<typeof setInterval> | null = null;
     try {
       const payload = JSON.parse(jsonText || "{}") as Partial<ClientCapturedAnalyzeRequest & AnalysisResponse>;
       if (isAnalysisResponse(payload)) {
         setProcessingProgress(100);
         setProcessingStatus(`已识别为分析报告 JSON，包含 ${payload.totals?.validSamples || 0} 条有效样本，正在直接渲染。`);
+        replacePipelineTiming(payload.pipelineTiming || null);
         setResult(payload);
         return;
       }
@@ -188,8 +217,23 @@ function App() {
         throw new Error([analysis.error, analysis.details].filter(Boolean).join("："));
       }
       setProcessingProgress(100);
-      setProcessingStatus(`分析完成：${analysis.totals?.validSamples || 0} 条有效样本。`);
-      setResult(analysis as AnalysisResponse);
+      const analysisFinishedAt = new Date().toISOString();
+      const nextTiming = mergePipelineTiming(pipelineTimingRef.current, {
+        analysisStartedAt,
+        analysisFinishedAt,
+        analysisMs: Math.max(1, Date.now() - analysisStartedMs)
+      });
+      const finalResult = {
+        ...(analysis as AnalysisResponse),
+        pipelineTiming: nextTiming || undefined
+      };
+      replacePipelineTiming(nextTiming);
+      setProcessingStatus(
+        `分析完成：${analysis.totals?.validSamples || 0} 条有效样本。全流程耗时 ${formatDurationShort(
+          nextTiming?.totalMs
+        )}，分析耗时 ${formatDurationShort(nextTiming?.analysisMs)}。`
+      );
+      setResult(finalResult);
     } catch (requestError) {
       if (requestError instanceof DOMException && requestError.name === "AbortError") {
         setError("分析请求超过 150 秒仍未返回。若使用 BERT，这通常是本地模型首次加载或单批推理耗时过长；建议确认本地 BERT 仍在运行，或减少本次评论数。");
@@ -246,8 +290,10 @@ function App() {
           setCommentsPerPost={setCommentsPerPost}
           captureOutput={captureOutput}
           setCaptureOutput={setCaptureOutput}
-          onCaptureLoaded={(captureText) => {
+          onCaptureLoaded={(captureText, timing) => {
             setJsonText(captureText);
+            replacePipelineTiming(normalizePipelineTiming(timing || null));
+            setResult(null);
             setProcessingProgress(0);
             setProcessingStatus("MediaCrawler capture JSON 已载入，点击“用本地 BERT 生成报告”即可分析。");
           }}
@@ -348,7 +394,7 @@ function MediaCrawlerPanel({
   setCommentsPerPost: (value: number) => void;
   captureOutput: string;
   setCaptureOutput: (value: string) => void;
-  onCaptureLoaded: (captureText: string) => void;
+  onCaptureLoaded: (captureText: string, timing?: AnalysisPipelineTiming | null) => void;
 }) {
   const [headless, setHeadless] = useState(false);
   const [status, setStatus] = useState<MediaCrawlerStatus>({ running: false, status: "idle", logs: [] });
@@ -429,7 +475,15 @@ function MediaCrawlerPanel({
       if (!response.ok) {
         throw new Error(payload.error || "读取 capture JSON 失败");
       }
-      onCaptureLoaded(JSON.stringify(payload, null, 2));
+      onCaptureLoaded(
+        JSON.stringify(payload, null, 2),
+        normalizePipelineTiming({
+          workflowStartedAt: status.startedAt,
+          workflowFinishedAt: status.finishedAt,
+          collectionStartedAt: status.startedAt,
+          collectionFinishedAt: status.finishedAt
+        })
+      );
     } catch (error) {
       setCollectorError(error instanceof Error ? error.message : "读取 capture JSON 失败");
     }
@@ -544,6 +598,9 @@ function ReportDashboard({ result, onExport }: { result: AnalysisResponse; onExp
   );
   const dominant = getDominantBucket(result.distribution);
   const report = result.report;
+  const timing = result.pipelineTiming;
+  const dataPrepMs = timing?.collectionMs ?? timing?.importMs;
+  const dataPrepLabel = timing?.collectionMs ? "采集转换耗时" : timing?.importMs ? "导入转换耗时" : "数据准备耗时";
 
   return (
     <Card className="overflow-hidden">
@@ -554,6 +611,12 @@ function ReportDashboard({ result, onExport }: { result: AnalysisResponse; onExp
               <Badge>本地采集</Badge>
               <Badge variant="outline">{result.engine.toUpperCase()}</Badge>
               <Badge variant="outline">{new Date(result.capturedAt).toLocaleString("zh-CN")}</Badge>
+              {timing?.totalMs ? (
+                <Badge variant="outline" className="gap-1">
+                  <Clock3 className="size-3.5" />
+                  全流程 {formatDurationShort(timing.totalMs)}
+                </Badge>
+              ) : null}
             </div>
             <CardTitle className="text-3xl tracking-tight">
               {report?.headline || `“${result.keyword}”主要情绪：${LABEL_META[dominant.label].name}`}
@@ -569,6 +632,14 @@ function ReportDashboard({ result, onExport }: { result: AnalysisResponse; onExp
           <MetricCard label="评论" value={result.totals.comments} icon={<MessageCircle className="size-4" />} />
           <MetricCard label="有效样本" value={result.totals.validSamples} icon={<Database className="size-4" />} />
         </div>
+
+        {timing?.totalMs || dataPrepMs || timing?.analysisMs ? (
+          <div className="grid gap-4 md:grid-cols-3">
+            {timing?.totalMs ? <MetricCard label="全流程耗时" value={formatDurationShort(timing.totalMs)} icon={<Clock3 className="size-4" />} /> : null}
+            {dataPrepMs ? <MetricCard label={dataPrepLabel} value={formatDurationShort(dataPrepMs)} icon={<Terminal className="size-4" />} /> : null}
+            {timing?.analysisMs ? <MetricCard label="分析耗时" value={formatDurationShort(timing.analysisMs)} icon={<Radar className="size-4" />} /> : null}
+          </div>
+        ) : null}
 
         {report && <ReportInsights report={report} />}
 
@@ -856,7 +927,7 @@ function MetricPill({ label, value }: { label: string; value: string }) {
   );
 }
 
-function MetricCard({ label, value, icon }: { label: string; value: number; icon: React.ReactNode }) {
+function MetricCard({ label, value, icon }: { label: string; value: number | string; icon: React.ReactNode }) {
   return (
     <Card className="shadow-none">
       <CardContent className="flex items-center justify-between p-5">
@@ -1124,6 +1195,7 @@ function csvCell(value: string) {
 }
 
 function buildMarkdown(result: AnalysisResponse): string {
+  const timingRows = buildTimingMarkdownRows(result.pipelineTiming);
   const distributionRows = (["positive", "neutral", "negative"] as SentimentLabel[])
     .map((label) => {
       const bucket = result.distribution[label];
@@ -1168,10 +1240,106 @@ ${sampleRows || "暂无样本"}
 - 抓取时间：${new Date(result.capturedAt).toLocaleString("zh-CN")}
 - 帖子数：${result.totals.posts}
 - 评论数：${result.totals.comments}
+- 全流程耗时：${formatDurationShort(result.pipelineTiming?.totalMs)}
+- 数据准备耗时：${formatDurationShort(result.pipelineTiming?.collectionMs ?? result.pipelineTiming?.importMs)}
+- 分析耗时：${formatDurationShort(result.pipelineTiming?.analysisMs)}
 - 模式：${result.sourceMode}
 - 数据质量：${result.report?.dataQuality.message || "未提供"}
 - 警告：${result.warnings.join("；") || "无"}
+
+${timingRows}
 `;
+}
+
+function normalizePipelineTiming(input?: AnalysisPipelineTiming | null): AnalysisPipelineTiming | null {
+  if (!input) {
+    return null;
+  }
+  const next: AnalysisPipelineTiming = { ...input };
+  next.collectionMs = next.collectionMs ?? diffMs(next.collectionStartedAt, next.collectionFinishedAt) ?? undefined;
+  next.importMs = next.importMs ?? diffMs(next.importStartedAt, next.importFinishedAt) ?? undefined;
+  next.analysisMs = next.analysisMs ?? diffMs(next.analysisStartedAt, next.analysisFinishedAt) ?? undefined;
+  next.workflowStartedAt = next.workflowStartedAt || earliestIso([
+    next.collectionStartedAt,
+    next.importStartedAt,
+    next.analysisStartedAt
+  ]);
+  next.workflowFinishedAt = next.workflowFinishedAt || latestIso([
+    next.collectionFinishedAt,
+    next.importFinishedAt,
+    next.analysisFinishedAt
+  ]);
+  next.totalMs = next.totalMs ?? diffMs(next.workflowStartedAt, next.workflowFinishedAt) ?? next.analysisMs ?? next.collectionMs ?? next.importMs;
+  return next;
+}
+
+function mergePipelineTiming(base?: AnalysisPipelineTiming | null, patch?: AnalysisPipelineTiming | null) {
+  const combined: AnalysisPipelineTiming = { ...(base || {}), ...(patch || {}) };
+  combined.workflowStartedAt = earliestIso([
+    base?.workflowStartedAt,
+    patch?.workflowStartedAt,
+    combined.collectionStartedAt,
+    combined.importStartedAt,
+    combined.analysisStartedAt
+  ]);
+  combined.workflowFinishedAt = latestIso([
+    base?.workflowFinishedAt,
+    patch?.workflowFinishedAt,
+    combined.collectionFinishedAt,
+    combined.importFinishedAt,
+    combined.analysisFinishedAt
+  ]);
+  combined.totalMs = undefined;
+  return normalizePipelineTiming(combined);
+}
+
+function diffMs(start?: string, end?: string) {
+  if (!start || !end) {
+    return null;
+  }
+  const delta = new Date(end).getTime() - new Date(start).getTime();
+  return Number.isFinite(delta) && delta >= 0 ? delta : null;
+}
+
+function earliestIso(values: Array<string | undefined>) {
+  const sorted = values.filter(Boolean).sort((left, right) => new Date(left as string).getTime() - new Date(right as string).getTime());
+  return sorted[0];
+}
+
+function latestIso(values: Array<string | undefined>) {
+  const sorted = values.filter(Boolean).sort((left, right) => new Date(right as string).getTime() - new Date(left as string).getTime());
+  return sorted[0];
+}
+
+function formatDurationShort(value?: number | null) {
+  if (!value || value <= 0) {
+    return "--";
+  }
+  if (value < 1_000) {
+    return `${value} ms`;
+  }
+  const seconds = value / 1_000;
+  if (seconds < 60) {
+    return `${seconds.toFixed(seconds >= 10 ? 1 : 2)} s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainSeconds = seconds - minutes * 60;
+  return `${minutes}m ${remainSeconds.toFixed(remainSeconds >= 10 ? 0 : 1)}s`;
+}
+
+function buildTimingMarkdownRows(timing?: AnalysisPipelineTiming) {
+  if (!timing) {
+    return "";
+  }
+  const rows = [
+    timing.workflowStartedAt ? `- 流程开始：${new Date(timing.workflowStartedAt).toLocaleString("zh-CN")}` : "",
+    timing.workflowFinishedAt ? `- 流程结束：${new Date(timing.workflowFinishedAt).toLocaleString("zh-CN")}` : "",
+    timing.totalMs ? `- 端到端总耗时：${formatDurationShort(timing.totalMs)}` : "",
+    timing.collectionMs ? `- 采集转换耗时：${formatDurationShort(timing.collectionMs)}` : "",
+    timing.importMs ? `- 导入转换耗时：${formatDurationShort(timing.importMs)}` : "",
+    timing.analysisMs ? `- 情绪分析耗时：${formatDurationShort(timing.analysisMs)}` : ""
+  ].filter(Boolean);
+  return rows.length ? `\n## 流程耗时\n\n${rows.join("\n")}` : "";
 }
 
 function apiBaseUrl(): string {

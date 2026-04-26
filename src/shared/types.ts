@@ -95,6 +95,21 @@ export interface AnalysisReport {
   };
 }
 
+export interface AnalysisPipelineTiming {
+  workflowStartedAt?: string;
+  workflowFinishedAt?: string;
+  collectionStartedAt?: string;
+  collectionFinishedAt?: string;
+  importStartedAt?: string;
+  importFinishedAt?: string;
+  analysisStartedAt?: string;
+  analysisFinishedAt?: string;
+  collectionMs?: number;
+  importMs?: number;
+  analysisMs?: number;
+  totalMs?: number;
+}
+
 export interface AnalysisResponse {
   keyword: string;
   engine: AnalysisEngine;
@@ -108,6 +123,7 @@ export interface AnalysisResponse {
   summary: string;
   insights: AnalysisInsight[];
   report: AnalysisReport;
+  pipelineTiming?: AnalysisPipelineTiming;
   diagnostics?: AnalysisDiagnostics;
   exports: AnalysisExportInfo;
   sourceMode: "client";
