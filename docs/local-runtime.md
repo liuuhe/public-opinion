@@ -73,3 +73,5 @@ npm run mediacrawler:to-capture -- `
   --keyword "酒店 避雷" `
   --output "data\captures\xhs-mediacrawler-酒店-避雷.json"
 ```
+
+WebUI 的“暂停采集”会停止当前 crawler 进程，并尝试把已经写入的 JSONL 转换成 capture JSON。如果日志持续显示 CDP 端口不可访问，需要先用远程调试端口启动 Chrome/Edge，或关闭 MediaCrawler 的“连接已有浏览器”配置。

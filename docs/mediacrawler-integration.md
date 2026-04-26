@@ -24,6 +24,8 @@ data\captures\xhs-mediacrawler-*.json
 
 点击“载入结果”后即可用本地 BERT 生成报告。
 
+采集中可以点击“暂停采集”。暂停会终止当前 MediaCrawler 进程，并尝试转换已经写出的 JSONL；如果尚未采到数据，任务会停在 `paused` 状态并在日志里说明原因。
+
 ## CLI 采集
 
 ```powershell

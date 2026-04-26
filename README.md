@@ -24,6 +24,7 @@ http://127.0.0.1:8788
 
 - 在页面中填写关键词、帖子数、每帖评论数。
 - 点击“开始采集”，由本地 WebUI 启动 vendored MediaCrawler。
+- 采集中可以点击“暂停采集”，本地 WebUI 会停止 crawler 并尝试转换已经写出的数据。
 - 采集完成后自动转换为 `data/captures/*.json`。
 - 点击“载入结果”，再用本地 BERT 生成报告。
 - 报告支持 JSON、Markdown、CSV 和打印 PDF。

@@ -38,7 +38,7 @@ type ExportFormat = "json" | "csv" | "markdown" | "pdf";
 
 type MediaCrawlerStatus = {
   running: boolean;
-  status: "idle" | "running" | "completed" | "failed";
+  status: "idle" | "running" | "pausing" | "paused" | "completed" | "failed";
   keyword?: string;
   startedAt?: string;
   finishedAt?: string;
@@ -344,6 +344,22 @@ function MediaCrawlerPanel({
     }
   }
 
+  async function pauseCollection() {
+    setCollectorError("");
+    try {
+      const response = await fetch(`${apiBaseUrl()}/api/mediacrawler/pause`, {
+        method: "POST"
+      });
+      const payload = (await response.json()) as MediaCrawlerStatus & { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error || "暂停采集失败");
+      }
+      setStatus(payload);
+    } catch (error) {
+      setCollectorError(error instanceof Error ? error.message : "暂停采集失败");
+    }
+  }
+
   async function loadCapture() {
     if (!status.capturePath) {
       return;
@@ -383,6 +399,9 @@ function MediaCrawlerPanel({
         <div className="flex flex-wrap gap-2">
           <Button type="button" onClick={() => void startCollection()} disabled={status.running}>
             {status.running ? "采集中..." : "开始采集"}
+          </Button>
+          <Button type="button" variant="outline" onClick={() => void pauseCollection()} disabled={!status.running || status.status === "pausing"}>
+            {status.status === "pausing" ? "暂停中..." : "暂停采集"}
           </Button>
           <Button type="button" variant="outline" onClick={() => void refreshStatus()}>
             刷新日志

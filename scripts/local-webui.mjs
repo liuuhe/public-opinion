@@ -55,6 +55,10 @@ const server = http.createServer(async (request, response) => {
       writeJson(response, await startMediaCrawler(body), 202);
       return;
     }
+    if (url.pathname === "/api/mediacrawler/pause" && request.method === "POST") {
+      writeJson(response, await pauseMediaCrawler());
+      return;
+    }
     if (url.pathname === "/api/mediacrawler/status") {
       writeJson(response, publicCrawlerJob());
       return;
@@ -130,6 +134,8 @@ async function startMediaCrawler(request) {
     status: "running",
     exitCode: null,
     error: "",
+    process: null,
+    stopRequested: false,
     logs: []
   };
 
@@ -146,37 +152,58 @@ async function startMediaCrawler(request) {
   ];
   appendCrawlerLog(`Starting MediaCrawler for "${keyword}"`);
   const child = spawn("powershell", crawlerArgs, { cwd: root, windowsHide: false });
+  crawlerJob.process = child;
   attachProcessLogs(child, "crawler");
   child.on("error", (error) => finishCrawlerJob(1, error.message));
   child.on("exit", async (code) => {
-    if (code !== 0) {
+    const wasPaused = Boolean(crawlerJob?.stopRequested);
+    if (code !== 0 && !wasPaused) {
       finishCrawlerJob(code ?? 1, `MediaCrawler exited with code ${code}`);
       return;
     }
     try {
-      appendCrawlerLog("Converting MediaCrawler output to capture JSON...");
-      await runNodeScript(path.join(root, "scripts", "mediacrawler-to-capture.mjs"), [
-        "--input-dir", path.join(root, "data", "mediacrawler", "xhs", "jsonl"),
-        "--keyword", keyword,
-        "--max-posts", String(maxPosts),
-        "--comments-per-post", String(commentsPerPost),
-        "--output", outputPath
-      ]);
+      await convertCrawlerOutput({ keyword, maxPosts, commentsPerPost, outputPath });
       const capture = JSON.parse(await readFile(outputPath, "utf8"));
       const comments = Array.isArray(capture.posts) ? capture.posts.reduce((sum, post) => sum + (Array.isArray(post.comments) ? post.comments.length : 0), 0) : 0;
       crawlerJob.capturePath = outputPath;
-      crawlerJob.status = "completed";
+      crawlerJob.status = wasPaused ? "paused" : "completed";
       crawlerJob.exitCode = 0;
       crawlerJob.finishedAt = new Date().toISOString();
       crawlerJob.running = false;
       crawlerJob.summary = { posts: Array.isArray(capture.posts) ? capture.posts.length : 0, comments };
-      appendCrawlerLog(`Capture JSON ready: ${outputPath}`);
+      appendCrawlerLog(`${wasPaused ? "Paused capture JSON" : "Capture JSON"} ready: ${outputPath}`);
     } catch (error) {
-      finishCrawlerJob(1, error instanceof Error ? error.message : String(error));
+      if (wasPaused) {
+        finishCrawlerJob(0, `采集已暂停，但暂时没有可转换的数据：${error instanceof Error ? error.message : String(error)}`, "paused");
+      } else {
+        finishCrawlerJob(1, error instanceof Error ? error.message : String(error));
+      }
     }
   });
 
   return publicCrawlerJob();
+}
+
+async function pauseMediaCrawler() {
+  if (!crawlerJob?.running || !crawlerJob.process) {
+    return publicCrawlerJob();
+  }
+  crawlerJob.stopRequested = true;
+  crawlerJob.status = "pausing";
+  appendCrawlerLog("Pause requested. Stopping MediaCrawler and converting any data already written...");
+  await stopProcessTree(crawlerJob.process.pid);
+  return publicCrawlerJob();
+}
+
+async function convertCrawlerOutput({ keyword, maxPosts, commentsPerPost, outputPath }) {
+  appendCrawlerLog("Converting MediaCrawler output to capture JSON...");
+  await runNodeScript(path.join(root, "scripts", "mediacrawler-to-capture.mjs"), [
+    "--input-dir", path.join(root, "data", "mediacrawler", "xhs", "jsonl"),
+    "--keyword", keyword,
+    "--max-posts", String(maxPosts),
+    "--comments-per-post", String(commentsPerPost),
+    "--output", outputPath
+  ]);
 }
 
 function runNodeScript(script, args) {
@@ -207,12 +234,12 @@ function appendCrawlerLog(line) {
   crawlerJob.logs = crawlerJob.logs.slice(-200);
 }
 
-function finishCrawlerJob(exitCode, error) {
+function finishCrawlerJob(exitCode, error, status = "failed") {
   if (!crawlerJob) {
     return;
   }
   crawlerJob.running = false;
-  crawlerJob.status = "failed";
+  crawlerJob.status = status;
   crawlerJob.exitCode = exitCode;
   crawlerJob.error = error;
   crawlerJob.finishedAt = new Date().toISOString();
@@ -238,6 +265,29 @@ function publicCrawlerJob() {
     summary: crawlerJob.summary,
     logs: crawlerJob.logs
   };
+}
+
+async function stopProcessTree(pid) {
+  if (!pid) {
+    return;
+  }
+  if (process.platform === "win32") {
+    await new Promise((resolve) => {
+      const child = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true });
+      child.on("error", resolve);
+      child.on("exit", resolve);
+    });
+    return;
+  }
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      // Ignore if the process has already exited.
+    }
+  }
 }
 
 function resolveCapturePath(value) {
