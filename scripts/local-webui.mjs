@@ -6,6 +6,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import process from "node:process";
+import { TextDecoder } from "node:util";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -17,6 +18,8 @@ const labels = ["positive", "neutral", "negative"];
 const captureRoot = path.join(root, "data", "captures");
 const cdpPort = 9222;
 const cdpUrl = `http://127.0.0.1:${cdpPort}/json/version`;
+const utf8Decoder = new TextDecoder("utf-8", { fatal: false });
+const gbkDecoder = createTextDecoder("gbk");
 let crawlerJob = null;
 
 if (!existsSync(staticRoot)) {
@@ -295,16 +298,45 @@ function runNodeScript(script, args) {
 }
 
 function attachProcessLogs(child, prefix) {
-  child.stdout?.on("data", (chunk) => appendCrawlerLog(`[${prefix}] ${chunk.toString("utf8").trim()}`));
-  child.stderr?.on("data", (chunk) => appendCrawlerLog(`[${prefix}] ${chunk.toString("utf8").trim()}`));
+  child.stdout?.on("data", (chunk) => appendCrawlerLog(`[${prefix}] ${decodeProcessOutput(chunk).trim()}`));
+  child.stderr?.on("data", (chunk) => appendCrawlerLog(`[${prefix}] ${decodeProcessOutput(chunk).trim()}`));
 }
 
 function appendCrawlerLog(line) {
   if (!crawlerJob || !line) {
     return;
   }
-  crawlerJob.logs.push(...String(line).split(/\r?\n/).map((item) => item.trim()).filter(Boolean));
+  crawlerJob.logs.push(...String(line).split(/\r?\n/).map((item) => cleanLogLine(item)).filter(Boolean));
   crawlerJob.logs = crawlerJob.logs.slice(-200);
+}
+
+function decodeProcessOutput(chunk) {
+  const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+  const utf8 = utf8Decoder.decode(buffer);
+  if (!looksMojibake(utf8) || !gbkDecoder) {
+    return utf8;
+  }
+  const gbk = gbkDecoder.decode(buffer);
+  return looksMojibake(gbk) ? utf8 : gbk;
+}
+
+function createTextDecoder(encoding) {
+  try {
+    return new TextDecoder(encoding, { fatal: false });
+  } catch {
+    return null;
+  }
+}
+
+function looksMojibake(value) {
+  return /�|[\u00c0-\u00ff]{2,}|[\u0100-\u017f]{2,}/u.test(value);
+}
+
+function cleanLogLine(value) {
+  return String(value)
+    .replace(/\x1b\[[0-9;]*m/g, "")
+    .replace(/\r/g, "")
+    .trim();
 }
 
 function finishCrawlerJob(exitCode, error, status = "failed") {

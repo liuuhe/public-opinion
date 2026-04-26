@@ -202,7 +202,7 @@ function App() {
     <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-5 px-4 py-5 md:px-8 md:py-7">
       <HeroCard />
 
-      <section className="grid gap-5 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+      <section className="grid min-w-0 gap-5 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
         <MediaCrawlerPanel
           keyword={keyword}
           setKeyword={setKeyword}
@@ -217,7 +217,7 @@ function App() {
           }}
         />
 
-        <Card onDragOver={(event) => event.preventDefault()} onDrop={(event) => void handleJsonDrop(event)}>
+        <Card className="min-w-0" onDragOver={(event) => event.preventDefault()} onDrop={(event) => void handleJsonDrop(event)}>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Upload className="size-5 text-primary" />
@@ -378,7 +378,7 @@ function MediaCrawlerPanel({
   }
 
   return (
-    <Card>
+    <Card className="min-w-0 overflow-hidden">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Terminal className="size-5 text-primary" />
@@ -386,8 +386,8 @@ function MediaCrawlerPanel({
         </CardTitle>
         <CardDescription>开始采集会自动打开带 CDP 端口的采集浏览器。首次使用时，请先在新窗口登录小红书。</CardDescription>
       </CardHeader>
-      <CardContent className="grid gap-3">
-        <div className="grid gap-3 sm:grid-cols-2">
+      <CardContent className="grid min-w-0 gap-3">
+        <div className="grid min-w-0 gap-3 sm:grid-cols-2">
           <TextInput label="关键词" value={keyword} onChange={setKeyword} />
           <NumberInput label="帖子数" value={maxPosts} onChange={setMaxPosts} min={1} max={50} />
           <NumberInput label="每帖评论" value={commentsPerPost} onChange={setCommentsPerPost} min={0} max={300} />
@@ -396,7 +396,7 @@ function MediaCrawlerPanel({
             无头模式
           </label>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex min-w-0 flex-wrap gap-2">
           <Button type="button" onClick={() => void startCollection()} disabled={status.running}>
             {status.running ? "采集中..." : "开始采集"}
           </Button>
@@ -417,7 +417,7 @@ function MediaCrawlerPanel({
             <AlertDescription>{collectorError}</AlertDescription>
           </Alert>
         )}
-        <div className="rounded-lg border bg-background/70 p-3 text-sm">
+        <div className="min-w-0 rounded-lg border bg-background/70 p-3 text-sm">
           <p className="font-medium">
             状态：{status.status}
             {status.summary ? `，${status.summary.posts} 篇帖子 / ${status.summary.comments} 条评论` : ""}
@@ -425,8 +425,8 @@ function MediaCrawlerPanel({
           {status.running && <p className="text-muted-foreground mt-1 text-xs">如果日志提示等待浏览器，请切到自动打开的 Chrome/Edge 窗口完成小红书登录。</p>}
           {status.capturePath && <p className="text-muted-foreground mt-1 break-all text-xs">{status.capturePath}</p>}
         </div>
-        <ScrollArea className="h-48 rounded-lg border bg-muted/30 p-3">
-          <pre className="whitespace-pre-wrap text-xs leading-5">{status.logs.length ? status.logs.join("\n") : "等待采集任务..."}</pre>
+        <ScrollArea className="h-56 max-w-full overflow-hidden rounded-lg border bg-muted/30 p-3">
+          <pre className="max-w-full whitespace-pre-wrap break-words font-mono text-xs leading-5">{status.logs.length ? status.logs.join("\n") : "等待采集任务..."}</pre>
         </ScrollArea>
       </CardContent>
     </Card>
