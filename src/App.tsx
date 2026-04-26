@@ -87,7 +87,7 @@ function App() {
   const [engine, setEngine] = useState<AnalysisEngine>("llm");
   const [maxPosts, setMaxPosts] = useState(10);
   const [commentsPerPost, setCommentsPerPost] = useState(30);
-  const [workerUrl, setWorkerUrl] = useState(DEFAULT_WORKER_URL);
+  const [workerUrl, setWorkerUrl] = useState(getDefaultWorkerUrl());
   const [jsonText, setJsonText] = useState("");
   const [result, setResult] = useState<AnalysisResponse | null>(null);
   const [error, setError] = useState("");
@@ -360,6 +360,17 @@ function App() {
   );
 }
 
+function getDefaultWorkerUrl() {
+  const configured = window.PUBLIC_OPINION_CONFIG?.workerUrl?.trim();
+  if (configured) {
+    return configured;
+  }
+  if (["localhost", "127.0.0.1", "0.0.0.0"].includes(window.location.hostname)) {
+    return window.location.origin;
+  }
+  return DEFAULT_WORKER_URL;
+}
+
 function HeroCard() {
   return (
     <Card className="glass-panel overflow-hidden border-0">
@@ -452,7 +463,7 @@ function MediaCrawlerPanel() {
       </CardHeader>
       <CardContent className="grid gap-3">
         <pre className="overflow-x-auto rounded-lg border bg-muted/40 p-3 text-xs leading-6">
-          <code>{'npm run mediacrawler:to-capture -- --input-dir "../MediaCrawler/data/xhs/jsonl" --keyword "酒店 避雷"'}</code>
+          <code>{'npm run mediacrawler:to-capture -- --input-dir "data/mediacrawler/xhs/jsonl" --keyword "酒店 避雷"'}</code>
         </pre>
         <p className="text-muted-foreground text-sm leading-6">
           先用 MediaCrawler 采集小红书，再把它的 contents/comments 输出转换到 <code>data/captures/</code>，即可导入本页分析或进入 dataset 流水线。

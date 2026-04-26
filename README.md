@@ -8,6 +8,21 @@
 https://opinion.liuhe.me
 ```
 
+本地入口也可独立运行，不依赖 Cloudflare：
+
+```powershell
+npm run local:bert
+npm run local:webui
+```
+
+打开：
+
+```text
+http://127.0.0.1:8788
+```
+
+完整本地运行说明见 `docs/local-runtime.md`。
+
 ## Main Flow
 
 1. 在 Chrome/Edge 扩展管理页启用开发者模式。
@@ -115,29 +130,24 @@ npm run package:bert:model
 
 ## MediaCrawler Dataset Collector
 
-小红书采集训练数据时优先使用 [NanmiCoder/MediaCrawler](https://github.com/NanmiCoder/MediaCrawler)。本仓库不再继续扩展自研爬取逻辑，只保留格式适配：
+小红书采集训练数据时优先使用本仓库 vendored 的 MediaCrawler 小红书子集。源码位于 `vendor/mediacrawler-xhs`，保留原项目 LICENSE，只保留本项目需要的小红书路径。
 
 ```powershell
-cd C:\Users\xlyytcy\codespace
-git clone https://github.com/NanmiCoder/MediaCrawler.git
-cd MediaCrawler
-uv sync
-uv run main.py --platform xhs --lt qrcode --type search
+npm run mediacrawler:xhs -- --keywords "酒店 避雷" --max_comments_count_singlenotes 80
 ```
 
-采集完成后回到本项目，把 MediaCrawler 的 `contents/comments` 输出转换为 capture JSON：
+采集完成后，把 MediaCrawler 的 `contents/comments` 输出转换为 capture JSON：
 
 ```powershell
-cd C:\Users\xlyytcy\codespace\public_opinion
-npm run mediacrawler:to-capture -- --input-dir "..\MediaCrawler\data\xhs\jsonl" --keyword "酒店 避雷" --output "data/captures/xhs-mediacrawler-酒店-避雷.json"
+npm run mediacrawler:to-capture -- --input-dir "data\mediacrawler\xhs\jsonl" --keyword "酒店 避雷" --output "data/captures/xhs-mediacrawler-酒店-避雷.json"
 ```
 
 也可以显式指定文件：
 
 ```powershell
 npm run mediacrawler:to-capture -- `
-  --contents "..\MediaCrawler\data\xhs\jsonl\search_contents_2026-04-26.jsonl" `
-  --comments "..\MediaCrawler\data\xhs\jsonl\search_comments_2026-04-26.jsonl" `
+  --contents "data\mediacrawler\xhs\jsonl\search_contents_2026-04-26.jsonl" `
+  --comments "data\mediacrawler\xhs\jsonl\search_comments_2026-04-26.jsonl" `
   --keyword "酒店 避雷" `
   --output "data/captures/xhs-mediacrawler-酒店-避雷.json"
 ```
@@ -190,4 +200,4 @@ cd bert
 - 采集基于个人登录态和小红书个性化推荐，论文和答辩中需要说明样本偏差。
 - 若小红书要求扫码、短信或滑块验证，直接在日常浏览器中完成，再重新运行插件采集。
 - 采集保持单线程和随机延迟，不做绕过平台风控的并发或反爬逻辑。
-- MediaCrawler 使用非商业学习许可；接入前需要确认使用场景符合其 LICENSE。
+- MediaCrawler 使用非商业学习许可；vendored 代码保留在 `vendor/mediacrawler-xhs`，使用前需要确认场景符合其 LICENSE。

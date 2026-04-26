@@ -1,15 +1,13 @@
 # MediaCrawler Integration
 
-本项目不再继续扩展自研 Playwright 小红书采集逻辑。采集训练数据时优先使用 [NanmiCoder/MediaCrawler](https://github.com/NanmiCoder/MediaCrawler)，本仓库只维护一个格式适配层，把 MediaCrawler 输出转换成现有 Worker/Web 能直接导入的 capture JSON。
+本项目不再继续扩展自研 Playwright 小红书采集逻辑。采集训练数据时优先使用 vendored MediaCrawler 小红书子集，源码在 `vendor/mediacrawler-xhs`。本仓库只维护小红书采集入口和格式适配层，把 MediaCrawler 输出转换成现有 Worker/Web 能直接导入的 capture JSON。
 
 ## Recommended Flow
 
-1. 在本仓库旁边克隆 MediaCrawler：
+1. 安装 vendored MediaCrawler 依赖：
 
 ```powershell
-cd C:\Users\xlyytcy\codespace
-git clone https://github.com/NanmiCoder/MediaCrawler.git
-cd MediaCrawler
+cd C:\Users\xlyytcy\codespace\public_opinion\vendor\mediacrawler-xhs
 uv sync
 ```
 
@@ -28,24 +26,23 @@ MAX_CONCURRENCY_NUM = 1
 CDP_CONNECT_EXISTING = True
 ```
 
-4. 运行小红书关键词采集：
+4. 从本项目根目录运行小红书关键词采集：
 
 ```powershell
-uv run main.py --platform xhs --lt qrcode --type search
+npm run mediacrawler:xhs -- --keywords "酒店 避雷" --max_comments_count_singlenotes 80
 ```
 
 MediaCrawler 默认会把小红书数据写到类似路径：
 
 ```text
-data/xhs/jsonl/search_contents_YYYY-MM-DD.jsonl
-data/xhs/jsonl/search_comments_YYYY-MM-DD.jsonl
+data/mediacrawler/xhs/jsonl/search_contents_YYYY-MM-DD.jsonl
+data/mediacrawler/xhs/jsonl/search_comments_YYYY-MM-DD.jsonl
 ```
 
-5. 回到本项目，把 MediaCrawler 输出转成 capture JSON：
+5. 把 MediaCrawler 输出转成 capture JSON：
 
 ```powershell
-cd C:\Users\xlyytcy\codespace\public_opinion
-npm run mediacrawler:to-capture -- --input-dir "..\MediaCrawler\data\xhs\jsonl" --keyword "酒店 避雷" --output "data/captures/xhs-mediacrawler-酒店-避雷.json"
+npm run mediacrawler:to-capture -- --input-dir "data\mediacrawler\xhs\jsonl" --keyword "酒店 避雷" --output "data/captures/xhs-mediacrawler-酒店-避雷.json"
 ```
 
 6. 生成的 capture JSON 可以直接：
@@ -59,15 +56,15 @@ npm run mediacrawler:to-capture -- --input-dir "..\MediaCrawler\data\xhs\jsonl" 
 自动扫描 MediaCrawler 输出目录：
 
 ```powershell
-npm run mediacrawler:to-capture -- --input-dir "..\MediaCrawler\data\xhs\jsonl" --keyword "酒店 避雷"
+npm run mediacrawler:to-capture -- --input-dir "data\mediacrawler\xhs\jsonl" --keyword "酒店 避雷"
 ```
 
 显式指定 contents/comments 文件：
 
 ```powershell
 npm run mediacrawler:to-capture -- `
-  --contents "..\MediaCrawler\data\xhs\jsonl\search_contents_2026-04-26.jsonl" `
-  --comments "..\MediaCrawler\data\xhs\jsonl\search_comments_2026-04-26.jsonl" `
+  --contents "data\mediacrawler\xhs\jsonl\search_contents_2026-04-26.jsonl" `
+  --comments "data\mediacrawler\xhs\jsonl\search_comments_2026-04-26.jsonl" `
   --keyword "酒店 避雷" `
   --output "data/captures/xhs-mediacrawler-酒店-避雷.json"
 ```
@@ -76,7 +73,7 @@ npm run mediacrawler:to-capture -- `
 
 ```powershell
 npm run mediacrawler:to-capture -- `
-  --input-dir "..\MediaCrawler\data\xhs\jsonl" `
+  --input-dir "data\mediacrawler\xhs\jsonl" `
   --keyword "健身房 值不值" `
   --max-posts 20 `
   --comments-per-post 100

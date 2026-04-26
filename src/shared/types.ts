@@ -122,3 +122,11 @@ export interface ApiErrorResponse {
   diagnostics?: AnalysisDiagnostics;
   warnings?: string[];
 }
+
+declare global {
+  interface Window {
+    PUBLIC_OPINION_CONFIG?: {
+      workerUrl?: string;
+    };
+  }
+}

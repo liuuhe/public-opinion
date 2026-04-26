@@ -12,6 +12,12 @@ MODEL_DIR = os.getenv("MODEL_DIR", "model")
 FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "google-bert/bert-base-chinese")
 ONNX_MODEL_FILE = os.getenv("ONNX_MODEL_FILE", "")
 MAX_LENGTH = int(os.getenv("MAX_LENGTH", "256"))
+BERT_RUNTIME = os.getenv("BERT_RUNTIME", "auto").lower()
+ONNX_PROVIDERS = [
+    provider.strip()
+    for provider in os.getenv("ONNX_PROVIDERS", "CPUExecutionProvider").split(",")
+    if provider.strip()
+]
 
 LABELS = ["negative", "neutral", "positive"]
 ID_TO_LABEL = {index: label for index, label in enumerate(LABELS)}
@@ -79,13 +85,17 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 @app.on_event("startup")
 def load_model() -> None:
     global tokenizer, model, onnx_session, onnx_input_names
+    if BERT_RUNTIME not in {"auto", "onnx", "torch"}:
+        raise ValueError("BERT_RUNTIME must be one of: auto, onnx, torch")
+
     has_local_model = os.path.exists(MODEL_DIR)
     model_path = MODEL_DIR if has_local_model else FALLBACK_MODEL
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     onnx_file = find_onnx_model_file(MODEL_DIR)
     onnx_path = os.path.join(MODEL_DIR, onnx_file) if onnx_file else ""
-    if has_local_model and os.path.exists(onnx_path):
-        onnx_session = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
+    should_use_onnx = BERT_RUNTIME != "torch" and has_local_model and os.path.exists(onnx_path)
+    if should_use_onnx:
+        onnx_session = ort.InferenceSession(onnx_path, providers=ONNX_PROVIDERS)
         onnx_input_names = {item.name for item in onnx_session.get_inputs()}
         model = None
     elif has_local_model:
@@ -108,8 +118,10 @@ def health() -> dict[str, object]:
         "ok": True,
         "modelDir": MODEL_DIR,
         "fallbackModel": FALLBACK_MODEL,
+        "runtimePreference": BERT_RUNTIME,
         "runtime": "onnxruntime" if onnx_session is not None else "pytorch",
         "onnxModelFile": find_onnx_model_file(MODEL_DIR),
+        "onnxProviders": onnx_session.get_providers() if onnx_session is not None else [],
         "device": str(device),
     }
 
