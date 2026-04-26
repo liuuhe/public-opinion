@@ -44,6 +44,7 @@ type MediaCrawlerStatus = {
   finishedAt?: string;
   exitCode?: number | null;
   error?: string;
+  targetPath?: string;
   capturePath?: string;
   summary?: {
     posts: number;
@@ -77,6 +78,7 @@ function App() {
   const [keyword, setKeyword] = useState("咖啡");
   const [maxPosts, setMaxPosts] = useState(10);
   const [commentsPerPost, setCommentsPerPost] = useState(30);
+  const [captureOutput, setCaptureOutput] = useState("data/captures");
   const [jsonText, setJsonText] = useState("");
   const [result, setResult] = useState<AnalysisResponse | null>(null);
   const [error, setError] = useState("");
@@ -88,10 +90,42 @@ function App() {
     if (!file) {
       return;
     }
-    setJsonText(await file.text());
+    const text = await file.text();
     setError("");
     setProcessingProgress(0);
-    setProcessingStatus(`已载入 ${file.name}，点击“生成/查看报告”开始处理。`);
+
+    if (isMediaCrawlerRawFile(file.name)) {
+      setIsLoading(true);
+      setProcessingStatus(`正在把 ${file.name} 转换成 capture JSON...`);
+      try {
+        const response = await fetch(`${apiBaseUrl()}/api/mediacrawler/import`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filename: file.name,
+            content: text,
+            keyword,
+            maxPosts,
+            commentsPerPost,
+            captureOutput
+          })
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "导入 MediaCrawler 原始文件失败");
+        }
+        setJsonText(JSON.stringify(payload.capture, null, 2));
+        setProcessingStatus(`已从 ${file.name} 转换出 capture JSON，输出到 ${payload.outputPath}。点击“用本地 BERT 生成报告”继续。`);
+      } catch (uploadError) {
+        setError(uploadError instanceof Error ? uploadError.message : "导入 MediaCrawler 原始文件失败");
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    setJsonText(text);
+    setProcessingStatus(`已载入 ${file.name}，点击“用本地 BERT 生成报告”开始处理。`);
   }
 
   async function handleJsonDrop(event: DragEvent<HTMLDivElement>) {
@@ -210,10 +244,12 @@ function App() {
           setMaxPosts={setMaxPosts}
           commentsPerPost={commentsPerPost}
           setCommentsPerPost={setCommentsPerPost}
+          captureOutput={captureOutput}
+          setCaptureOutput={setCaptureOutput}
           onCaptureLoaded={(captureText) => {
             setJsonText(captureText);
             setProcessingProgress(0);
-            setProcessingStatus("MediaCrawler capture JSON 已载入，点击“生成/查看报告”即可用本地模型分析。");
+            setProcessingStatus("MediaCrawler capture JSON 已载入，点击“用本地 BERT 生成报告”即可分析。");
           }}
         />
 
@@ -227,7 +263,11 @@ function App() {
           </CardHeader>
           <CardContent className="grid gap-4">
             <TextInput label="分析关键词" value={keyword} onChange={setKeyword} />
-            <Input type="file" accept="application/json,.json" onChange={(event) => void handleFileUpload(event.target.files?.[0])} />
+            <Input
+              type="file"
+              accept="application/json,.json,.jsonl,text/csv,.csv"
+              onChange={(event) => void handleFileUpload(event.target.files?.[0])}
+            />
             <textarea
               className="border-input bg-background min-h-64 rounded-md border p-3 text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
               value={jsonText}
@@ -296,6 +336,8 @@ function MediaCrawlerPanel({
   setMaxPosts,
   commentsPerPost,
   setCommentsPerPost,
+  captureOutput,
+  setCaptureOutput,
   onCaptureLoaded
 }: {
   keyword: string;
@@ -304,6 +346,8 @@ function MediaCrawlerPanel({
   setMaxPosts: (value: number) => void;
   commentsPerPost: number;
   setCommentsPerPost: (value: number) => void;
+  captureOutput: string;
+  setCaptureOutput: (value: string) => void;
   onCaptureLoaded: (captureText: string) => void;
 }) {
   const [headless, setHeadless] = useState(false);
@@ -332,7 +376,7 @@ function MediaCrawlerPanel({
       const response = await fetch(`${apiBaseUrl()}/api/mediacrawler/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keyword, maxPosts, commentsPerPost, headless })
+        body: JSON.stringify({ keyword, maxPosts, commentsPerPost, headless, captureOutput })
       });
       const payload = (await response.json()) as MediaCrawlerStatus & { error?: string };
       if (!response.ok) {
@@ -395,6 +439,10 @@ function MediaCrawlerPanel({
             <input type="checkbox" checked={headless} onChange={(event) => setHeadless(event.target.checked)} />
             无头模式
           </label>
+          <div className="grid gap-2 sm:col-span-2">
+            <Label>导出位置</Label>
+            <Input value={captureOutput} onChange={(event) => setCaptureOutput(event.target.value)} placeholder="data/captures 或 C:\\path\\result.json" />
+          </div>
         </div>
         <div className="flex min-w-0 flex-wrap gap-2">
           <Button type="button" onClick={() => void startCollection()} disabled={status.running}>
@@ -423,6 +471,7 @@ function MediaCrawlerPanel({
             {status.summary ? `，${status.summary.posts} 篇帖子 / ${status.summary.comments} 条评论` : ""}
           </p>
           {status.running && <p className="text-muted-foreground mt-1 text-xs">如果日志提示等待浏览器，请切到自动打开的 Chrome/Edge 窗口完成小红书登录。</p>}
+          {status.targetPath && <p className="text-muted-foreground mt-1 break-all text-xs">导出位置：{status.targetPath}</p>}
           {status.capturePath && <p className="text-muted-foreground mt-1 break-all text-xs">{status.capturePath}</p>}
         </div>
         <ScrollArea className="h-56 max-w-full overflow-hidden rounded-lg border bg-muted/30 p-3">
@@ -1113,6 +1162,10 @@ ${sampleRows || "暂无样本"}
 
 function apiBaseUrl(): string {
   return window.location.origin.replace(/\/+$/, "");
+}
+
+function isMediaCrawlerRawFile(filename: string) {
+  return /(?:search|detail)_(?:comments|contents)_[^/\\]+\.(jsonl|json|csv)$/i.test(filename);
 }
 
 export default App;

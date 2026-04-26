@@ -27,6 +27,7 @@ http://127.0.0.1:8788
 - 第一次使用时，需要在自动打开的采集浏览器里登录小红书。
 - 采集中可以点击“暂停采集”，本地 WebUI 会停止 crawler 并尝试转换已经写出的数据。
 - 采集完成后自动转换为 `data/captures/*.json`。
+- 也可以直接上传 `search_comments_*.jsonl` / `search_contents_*.jsonl`，网页会先自动转换成 capture JSON。
 - 点击“载入结果”，再用本地 BERT 生成报告。
 - 报告支持 JSON、Markdown、CSV 和打印 PDF。
 

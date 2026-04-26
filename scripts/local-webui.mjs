@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
 import { spawn } from "node:child_process";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import process from "node:process";
@@ -16,6 +16,7 @@ const host = process.env.LOCAL_WEBUI_HOST || "127.0.0.1";
 const bertBaseUrl = normalizeBaseUrl(process.env.BERT_INFERENCE_URL || "http://127.0.0.1:7860");
 const labels = ["positive", "neutral", "negative"];
 const captureRoot = path.join(root, "data", "captures");
+const importRoot = path.join(root, ".local", "imports");
 const cdpPort = 9222;
 const cdpUrl = `http://127.0.0.1:${cdpPort}/json/version`;
 const utf8Decoder = new TextDecoder("utf-8", { fatal: false });
@@ -66,6 +67,11 @@ const server = http.createServer(async (request, response) => {
     }
     if (url.pathname === "/api/mediacrawler/status") {
       writeJson(response, publicCrawlerJob());
+      return;
+    }
+    if (url.pathname === "/api/mediacrawler/import" && request.method === "POST") {
+      const body = await readJsonBody(request);
+      writeJson(response, await importMediaCrawlerFile(body));
       return;
     }
     if (url.pathname === "/api/mediacrawler/capture") {
@@ -123,7 +129,7 @@ async function startMediaCrawler(request) {
   const maxPosts = clamp(request.maxPosts, 10, 1, 200);
   const commentsPerPost = clamp(request.commentsPerPost, 30, 0, 500);
   const headless = Boolean(request.headless);
-  const outputPath = path.join(captureRoot, `xhs-mediacrawler-${safeFilename(keyword)}-${timestampForFile()}.json`);
+  const outputPath = resolveCaptureOutputPath(request.captureOutput, keyword);
   await mkdir(captureRoot, { recursive: true });
 
   crawlerJob = {
@@ -190,6 +196,46 @@ async function startMediaCrawler(request) {
   });
 
   return publicCrawlerJob();
+}
+
+async function importMediaCrawlerFile(request) {
+  const filename = text(request.filename || "mediacrawler.jsonl");
+  const content = String(request.content || "");
+  if (!filename || !content.trim()) {
+    const error = new Error("Missing filename or content");
+    error.status = 400;
+    throw error;
+  }
+
+  const kind = inferMediaCrawlerInputKind(filename, content);
+  if (!kind) {
+    const error = new Error("Unsupported MediaCrawler file. Upload search_comments/search_contents JSONL/JSON/CSV.");
+    error.status = 400;
+    throw error;
+  }
+
+  await mkdir(importRoot, { recursive: true });
+  const tempInput = path.join(importRoot, `${timestampForFile()}-${safeFilename(path.basename(filename))}${path.extname(filename) || ".jsonl"}`);
+  await writeFile(tempInput, content, "utf8");
+
+  const keyword = text(request.keyword || "") || inferKeywordFromFilename(filename) || "mediacrawler";
+  const outputPath = resolveCaptureOutputPath(request.captureOutput, keyword);
+  const args = [
+    kind === "contents" ? "--contents" : "--comments",
+    tempInput,
+    "--keyword", keyword,
+    "--max-posts", String(clamp(request.maxPosts, 30, 1, 200)),
+    "--comments-per-post", String(clamp(request.commentsPerPost, 80, 0, 500)),
+    "--output", outputPath
+  ];
+  await runNodeScript(path.join(root, "scripts", "mediacrawler-to-capture.mjs"), args);
+  const capture = JSON.parse(await readFile(outputPath, "utf8"));
+  return {
+    ok: true,
+    kind,
+    outputPath,
+    capture
+  };
 }
 
 async function ensureCdpBrowser() {
@@ -366,10 +412,77 @@ function publicCrawlerJob() {
     finishedAt: crawlerJob.finishedAt,
     exitCode: crawlerJob.exitCode,
     error: crawlerJob.error,
+    targetPath: crawlerJob.outputPath,
     capturePath: crawlerJob.capturePath,
     summary: crawlerJob.summary,
     logs: crawlerJob.logs
   };
+}
+
+function resolveCaptureOutputPath(rawValue, keyword) {
+  const value = text(rawValue);
+  const defaultFilename = `xhs-mediacrawler-${safeFilename(keyword)}-${timestampForFile()}.json`;
+  if (!value) {
+    return path.join(captureRoot, defaultFilename);
+  }
+  const resolved = path.resolve(value);
+  if (resolved.toLowerCase().endsWith(".json")) {
+    return resolved;
+  }
+  return path.join(resolved, defaultFilename);
+}
+
+function inferMediaCrawlerInputKind(filename, content) {
+  const name = filename.toLowerCase();
+  if (/(?:^|[_-])(search|detail)[_-]comments_/.test(name)) {
+    return "comments";
+  }
+  if (/(?:^|[_-])(search|detail)[_-]contents_/.test(name)) {
+    return "contents";
+  }
+
+  const sample = firstStructuredRecord(filename, content);
+  if (!sample || typeof sample !== "object") {
+    return "";
+  }
+  if ("comment_id" in sample || "commentId" in sample || "comment_text" in sample || "content" in sample) {
+    return "comments";
+  }
+  if ("title" in sample || "note_url" in sample || "noteId" in sample || "note_id" in sample) {
+    return "contents";
+  }
+  return "";
+}
+
+function firstStructuredRecord(filename, content) {
+  const ext = path.extname(filename).toLowerCase();
+  try {
+    if (ext === ".jsonl") {
+      const line = content.split(/\r?\n/).map((item) => item.trim()).find(Boolean);
+      return line ? JSON.parse(line) : null;
+    }
+    if (ext === ".json") {
+      const parsed = JSON.parse(content);
+      return Array.isArray(parsed) ? parsed[0] : parsed;
+    }
+    if (ext === ".csv") {
+      const [headerLine, firstLine] = content.split(/\r?\n/).filter(Boolean);
+      if (!headerLine || !firstLine) {
+        return null;
+      }
+      const headers = headerLine.split(",").map((item) => item.trim());
+      const values = firstLine.split(",").map((item) => item.trim());
+      return Object.fromEntries(headers.map((header, index) => [header, values[index] || ""]));
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function inferKeywordFromFilename(filename) {
+  const stem = path.basename(filename, path.extname(filename));
+  return stem.replace(/^(search|detail)_(comments|contents)_/i, "").replace(/[_-]\d{4}-\d{2}-\d{2}$/i, "");
 }
 
 async function stopProcessTree(pid) {

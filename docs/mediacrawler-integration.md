@@ -28,6 +28,8 @@ data\captures\xhs-mediacrawler-*.json
 
 WebUI 会自动启动带 CDP 端口的 Chrome/Edge 采集浏览器。第一次使用该浏览器 profile 时，需要先在新窗口登录小红书。
 
+如果你手头已经有 MediaCrawler 原始输出文件，也可以直接在 WebUI 上传 `search_comments_*.jsonl`、`search_contents_*.jsonl`、`.json` 或 `.csv`，页面会自动先转成 capture JSON。
+
 ## CLI 采集
 
 ```powershell
