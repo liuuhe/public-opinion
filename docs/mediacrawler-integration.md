@@ -22,7 +22,7 @@ npm run local
 data\captures\xhs-mediacrawler-*.json
 ```
 
-点击“载入结果”后即可用本地 BERT/LLM 生成报告。
+点击“载入结果”后即可用本地 BERT 生成报告。
 
 ## CLI 采集
 

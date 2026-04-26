@@ -13,8 +13,6 @@ const staticRoot = path.join(root, "dist", "local-client");
 const port = Number(process.env.LOCAL_WEBUI_PORT || process.env.PORT || 8788);
 const host = process.env.LOCAL_WEBUI_HOST || "127.0.0.1";
 const bertBaseUrl = normalizeBaseUrl(process.env.BERT_INFERENCE_URL || "http://127.0.0.1:7860");
-const openaiBaseUrl = normalizeBaseUrl(process.env.OPENAI_BASE_URL || "https://api.openai.com/v1");
-const openaiModel = process.env.OPENAI_MODEL || "gpt-4o-mini";
 const labels = ["positive", "neutral", "negative"];
 const captureRoot = path.join(root, "data", "captures");
 let crawlerJob = null;
@@ -36,11 +34,8 @@ const server = http.createServer(async (request, response) => {
       writeJson(response, {
         ok: true,
         mode: "local-webui",
-        llmConfigured: Boolean(process.env.OPENAI_API_KEY),
         bertConfigured: Boolean(bertBaseUrl),
         bertProvider: "local-url",
-        fixtureEnabled: false,
-        model: openaiModel,
         bertUrl: bertBaseUrl
       });
       return;
@@ -87,15 +82,14 @@ server.listen(port, host, () => {
 
 async function analyzeCaptured(request) {
   const keyword = text(request.keyword || "本地分析");
-  const engine = request.engine === "bert" ? "bert" : "llm";
   const maxPosts = clamp(request.maxPosts, 10, 1, 200);
   const commentsPerPost = clamp(request.commentsPerPost, 30, 0, 500);
   const warnings = [];
   const posts = sanitizePosts(request.posts, { keyword, maxPosts, commentsPerPost });
-  const labeledSamples = await labelComments(engine, flattenComments(posts), warnings, posts);
+  const labeledSamples = await labelComments(flattenComments(posts), warnings, posts);
   return buildAnalysisResponse({
     keyword,
-    engine,
+    engine: "bert",
     capturedAt: new Date().toISOString(),
     posts,
     labeledSamples,
@@ -104,7 +98,7 @@ async function analyzeCaptured(request) {
       pageUrl: text(request.pageUrl),
       extractedLinkCount: posts.length,
       commentCountsByPost: Object.fromEntries(posts.map((post) => [post.postId, post.comments.length])),
-      advice: "本次数据由本地 WebUI 分析；BERT/LLM 推理由本机服务完成。"
+      advice: "本次数据由本地 WebUI 分析；情绪推理由本机 BERT 服务完成。"
     }
   });
 }
@@ -311,9 +305,9 @@ function sanitizePosts(rawPosts, options) {
   return posts;
 }
 
-async function labelComments(engine, comments, warnings, posts) {
+async function labelComments(comments, warnings, posts) {
   const titleByPostId = new Map(posts.map((post) => [post.postId, post.title || post.url]));
-  const labelsById = engine === "bert" ? await labelWithBert(comments, warnings) : await labelWithLlm(comments, warnings);
+  const labelsById = await labelWithBert(comments, warnings);
   const labelMap = new Map(labelsById.map((item) => [item.sampleId, item]));
   return comments.map((comment) => {
     const result = labelMap.get(comment.sampleId) || heuristicLabel(comment);
@@ -343,44 +337,6 @@ async function labelWithBert(comments, warnings) {
       results.push(...rows.map(normalizeLabelRow).filter(Boolean));
     } catch (error) {
       warnings.push(`本地 BERT 第 ${index + 1}/${chunks.length} 批失败，已使用保守兜底：${error instanceof Error ? error.message : String(error)}`);
-      results.push(...chunk.map(heuristicLabel));
-    }
-  }
-  return results;
-}
-
-async function labelWithLlm(comments, warnings) {
-  if (!process.env.OPENAI_API_KEY) {
-    warnings.push("本地未配置 OPENAI_API_KEY，已使用保守兜底标注。");
-    return comments.map(heuristicLabel);
-  }
-  const chunks = chunkArray(comments, 20);
-  const results = [];
-  for (const [index, chunk] of chunks.entries()) {
-    try {
-      const payload = await fetchJson(`${openaiBaseUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: openaiModel,
-          temperature: 0,
-          max_tokens: 3000,
-          response_format: { type: "json_object" },
-          messages: [
-            { role: "system", content: "你是网络舆情情绪标注器。返回 JSON: {\"labels\":[{\"sample_id\":\"...\",\"label\":\"positive|neutral|negative\",\"confidence\":0.0,\"reason_short\":\"...\"}]}" },
-            { role: "user", content: JSON.stringify({ samples: chunk.map((comment) => ({ sample_id: comment.sampleId, text: comment.text })) }) }
-          ]
-        })
-      }, 30_000);
-      const content = payload.body?.choices?.[0]?.message?.content || "";
-      const parsed = JSON.parse(content);
-      const rows = Array.isArray(parsed.labels) ? parsed.labels : [];
-      results.push(...rows.map(normalizeLabelRow).filter(Boolean));
-    } catch (error) {
-      warnings.push(`本地 LLM 第 ${index + 1}/${chunks.length} 批失败，已使用保守兜底：${error instanceof Error ? error.message : String(error)}`);
       results.push(...chunk.map(heuristicLabel));
     }
   }

@@ -11,7 +11,7 @@ C:\Users\xlyytcy\codespace\public_opinion
 - The app is a fully local Xiaohongshu opinion-analysis workbench.
 - The local WebUI starts vendored MediaCrawler for Xiaohongshu collection.
 - MediaCrawler output is converted to capture JSON under `data/captures/`.
-- The WebUI analyzes capture JSON through local BERT or local LLM configuration.
+- The WebUI analyzes capture JSON through local BERT.
 - Reports can be exported as JSON, Markdown, CSV, or printed PDF.
 
 ## Important Paths

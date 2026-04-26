@@ -27,11 +27,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import type { AnalysisEngine, AnalysisResponse, ClientCapturedAnalyzeRequest, LabeledSample, SentimentBucket, SentimentLabel } from "./shared/types";
+import type { AnalysisResponse, ClientCapturedAnalyzeRequest, LabeledSample, SentimentBucket, SentimentLabel } from "./shared/types";
 
-const LLM_CHUNK_SIZE = 20;
-const LLM_CHUNK_CONCURRENCY = 3;
-const ESTIMATED_WAVE_SECONDS = 8;
 const BERT_CHUNK_SIZE = 64;
 const BERT_ESTIMATED_CHUNK_SECONDS = 14;
 const BEST_MODEL_TEST_MACRO_F1 = "0.8295";
@@ -78,7 +75,6 @@ const LABEL_META: Record<SentimentLabel, { name: string; description: string; co
 
 function App() {
   const [keyword, setKeyword] = useState("咖啡");
-  const [engine, setEngine] = useState<AnalysisEngine>("bert");
   const [maxPosts, setMaxPosts] = useState(10);
   const [commentsPerPost, setCommentsPerPost] = useState(30);
   const [jsonText, setJsonText] = useState("");
@@ -121,31 +117,28 @@ function App() {
         return;
       }
       const stats = summarizeCapturePayload(payload);
-      const selectedEngine = engine;
-      const initialProgress = estimateAnalysisProgress(selectedEngine, stats.comments, 0);
+      const initialProgress = estimateBertAnalysisProgress(stats.comments, 0);
       setProcessingProgress(initialProgress.percent);
-      setProcessingStatus(buildAnalysisProgressMessage(selectedEngine, stats, initialProgress, 0, "start"));
+      setProcessingStatus(buildAnalysisProgressMessage(stats, initialProgress, 0, "start"));
 
-      if (selectedEngine === "bert") {
-        try {
-          setProcessingProgress(12);
-          setProcessingStatus(`已识别为采集 JSON：${stats.posts} 篇帖子、${stats.comments} 条评论。正在检查本地 BERT，首次加载模型可能需要几十秒...`);
-          await fetchWithTimeout(`${apiBaseUrl()}/api/bert/health`, BERT_WARMUP_TIMEOUT_MS);
-        } catch {
-          setProcessingStatus("本地 BERT 健康检查未及时返回，继续提交分析请求；如果模型正在加载，本次可能会稍慢。");
-        }
+      try {
+        setProcessingProgress(12);
+        setProcessingStatus(`已识别为采集 JSON：${stats.posts} 篇帖子、${stats.comments} 条评论。正在检查本地 BERT，首次加载模型可能需要几十秒...`);
+        await fetchWithTimeout(`${apiBaseUrl()}/api/bert/health`, BERT_WARMUP_TIMEOUT_MS);
+      } catch {
+        setProcessingStatus("本地 BERT 健康检查未及时返回，继续提交分析请求；如果模型正在加载，本次可能会稍慢。");
       }
 
       const startedAt = Date.now();
       progressTimer = setInterval(() => {
         const elapsed = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
-        const progress = estimateAnalysisProgress(selectedEngine, stats.comments, elapsed);
+        const progress = estimateBertAnalysisProgress(stats.comments, elapsed);
         setProcessingProgress(progress.percent);
-        setProcessingStatus(buildAnalysisProgressMessage(selectedEngine, stats, progress, elapsed, "running"));
+        setProcessingStatus(buildAnalysisProgressMessage(stats, progress, elapsed, "running"));
       }, 1000);
       const requestPayload: ClientCapturedAnalyzeRequest = {
         keyword: String(payload.keyword || keyword),
-        engine: selectedEngine,
+        engine: "bert",
         maxPosts,
         commentsPerPost,
         pageUrl: String(payload.pageUrl || ""),
@@ -173,31 +166,6 @@ function App() {
       if (progressTimer) {
         clearInterval(progressTimer);
       }
-      setIsLoading(false);
-    }
-  }
-
-  async function loadFixture() {
-    setError("");
-    setProcessingProgress(30);
-    setProcessingStatus("正在加载演示报告...");
-    setIsLoading(true);
-    try {
-      const response = await fetch(`${apiBaseUrl()}/api/analyze`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keyword, engine, maxPosts, commentsPerPost, useFixture: true })
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error([payload.error, payload.details].filter(Boolean).join("："));
-      }
-      setProcessingProgress(100);
-      setProcessingStatus("演示报告加载完成。");
-      setResult(payload as AnalysisResponse);
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "演示数据加载失败");
-    } finally {
       setIsLoading(false);
     }
   }
@@ -258,18 +226,7 @@ function App() {
             <CardDescription>支持 MediaCrawler 转换出的 capture JSON，也支持已经生成的 analysis JSON。可选择文件、拖拽文件或直接粘贴。</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <TextInput label="分析关键词" value={keyword} onChange={setKeyword} />
-              <div className="grid gap-2">
-                <Label>标注引擎</Label>
-                <Tabs value={engine} onValueChange={(value) => setEngine(value as AnalysisEngine)}>
-                  <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="bert">本地 BERT</TabsTrigger>
-                    <TabsTrigger value="llm">本地 LLM</TabsTrigger>
-                  </TabsList>
-                </Tabs>
-              </div>
-            </div>
+            <TextInput label="分析关键词" value={keyword} onChange={setKeyword} />
             <Input type="file" accept="application/json,.json" onChange={(event) => void handleFileUpload(event.target.files?.[0])} />
             <textarea
               className="border-input bg-background min-h-64 rounded-md border p-3 text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
@@ -278,19 +235,11 @@ function App() {
               placeholder="粘贴 MediaCrawler capture JSON，或完整 analysis JSON..."
             />
             <Button type="button" onClick={() => void analyzeJson()} disabled={isLoading || !jsonText.trim()}>
-              {isLoading ? "处理中..." : "生成/查看报告"}
-            </Button>
-            <Button variant="outline" type="button" onClick={() => void loadFixture()} disabled={isLoading}>
-              加载演示报告
+              {isLoading ? "处理中..." : "用本地 BERT 生成报告"}
             </Button>
             {processingStatus && <p className="text-muted-foreground text-sm leading-6">{processingStatus}</p>}
           </CardContent>
         </Card>
-      </section>
-
-      <section className="grid gap-5 lg:grid-cols-2">
-        <LocalRuntimePanel />
-        <ModelBaselinePanel />
       </section>
 
       {error && (
@@ -327,7 +276,7 @@ function HeroCard() {
             本地采集、本地推理，生成小红书舆情报告。
           </CardTitle>
           <CardDescription className="mt-3 max-w-3xl text-sm leading-6">
-            MediaCrawler 负责小红书采集，本机 BERT/LLM 负责情绪标注和报告生成。整个流程通过本地 WebUI 完成。
+            MediaCrawler 负责小红书采集，本机 BERT 负责情绪标注和报告生成。运行 <code>npm run local</code> 后打开 <code>http://127.0.0.1:8788</code>；当前模型基线 test macro F1 为 <strong>{BEST_MODEL_TEST_MACRO_F1}</strong>。
           </CardDescription>
         </div>
         <div className="grid gap-2 sm:grid-cols-3 md:grid-cols-1">
@@ -335,51 +284,6 @@ function HeroCard() {
           <MetricPill label="分析" value="本地 BERT" />
           <MetricPill label="沉淀" value="PDF / JSON / CSV" />
         </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function LocalRuntimePanel() {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Terminal className="size-5 text-primary" />
-          本地运行入口
-        </CardTitle>
-        <CardDescription>产品路径已经切到本地 WebUI；采集、分析和导出都在本机完成。</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-3">
-        <pre className="overflow-x-auto rounded-lg border bg-muted/40 p-3 text-xs leading-6">
-          <code>npm run local</code>
-        </pre>
-        <p className="text-muted-foreground text-sm leading-6">
-          一键启动会构建前端、启动本地 BERT、启动本地 WebUI，并打开 <code>http://127.0.0.1:8788</code>。采集日志会显示在 MediaCrawler 面板中。
-        </p>
-      </CardContent>
-    </Card>
-  );
-}
-
-function ModelBaselinePanel() {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <CheckCircle2 className="size-5 text-primary" />
-          当前模型基线
-        </CardTitle>
-        <CardDescription>当前最佳模型作为本地分析基线，后续新模型仍需超过冻结测试集基线才替换。</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-3">
-        <div className="rounded-lg border bg-background/70 p-4">
-          <p className="text-muted-foreground text-sm">当前最佳 test macro F1</p>
-          <p className="mt-1 text-3xl font-semibold tracking-tight">{BEST_MODEL_TEST_MACRO_F1}</p>
-        </div>
-        <p className="text-muted-foreground text-sm leading-6">
-          最近的 LLM 预标注 v3 训练未超过该基线，因此不建议替换当前模型。下一轮模型优化应先提升标签质量，尤其是负向评论与中性评论的边界。
-        </p>
       </CardContent>
     </Card>
   );
@@ -564,7 +468,7 @@ function ReportDashboard({ result, onExport }: { result: AnalysisResponse; onExp
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="space-y-3">
             <div className="flex flex-wrap gap-2">
-              <Badge>{result.sourceMode === "fixture" ? "fixture 演示" : "本地采集"}</Badge>
+              <Badge>本地采集</Badge>
               <Badge variant="outline">{result.engine.toUpperCase()}</Badge>
               <Badge variant="outline">{new Date(result.capturedAt).toLocaleString("zh-CN")}</Badge>
             </div>
@@ -908,30 +812,6 @@ function summarizeCapturePayload(value: Partial<ClientCapturedAnalyzeRequest & A
   };
 }
 
-function estimateAnalysisProgress(engine: AnalysisEngine, totalComments: number, elapsedSeconds: number) {
-  return engine === "bert" ? estimateBertAnalysisProgress(totalComments, elapsedSeconds) : estimateLlmAnalysisProgress(totalComments, elapsedSeconds);
-}
-
-function estimateLlmAnalysisProgress(totalComments: number, elapsedSeconds: number) {
-  const safeTotal = Math.max(0, totalComments);
-  const totalBatches = Math.max(1, Math.ceil(safeTotal / LLM_CHUNK_SIZE));
-  const totalWaves = Math.max(1, Math.ceil(totalBatches / LLM_CHUNK_CONCURRENCY));
-  const currentWave = Math.min(totalWaves, Math.floor(elapsedSeconds / ESTIMATED_WAVE_SECONDS) + 1);
-  const startBatch = (currentWave - 1) * LLM_CHUNK_CONCURRENCY + 1;
-  const endBatch = Math.min(totalBatches, currentWave * LLM_CHUNK_CONCURRENCY);
-  const startComment = safeTotal === 0 ? 0 : (startBatch - 1) * LLM_CHUNK_SIZE + 1;
-  const endComment = Math.min(safeTotal, endBatch * LLM_CHUNK_SIZE);
-  const percent = Math.min(95, Math.max(8, Math.round((currentWave / totalWaves) * 90)));
-  return {
-    totalBatches,
-    startBatch,
-    endBatch,
-    startComment,
-    endComment,
-    percent
-  };
-}
-
 function estimateBertAnalysisProgress(totalComments: number, elapsedSeconds: number) {
   const safeTotal = Math.max(0, totalComments);
   const totalBatches = Math.max(1, Math.ceil(safeTotal / BERT_CHUNK_SIZE));
@@ -950,22 +830,15 @@ function estimateBertAnalysisProgress(totalComments: number, elapsedSeconds: num
 }
 
 function buildAnalysisProgressMessage(
-  engine: AnalysisEngine,
   stats: { posts: number; comments: number },
-  progress: ReturnType<typeof estimateAnalysisProgress>,
+  progress: ReturnType<typeof estimateBertAnalysisProgress>,
   elapsedSeconds: number,
   phase: "start" | "running"
 ) {
-  if (engine === "bert") {
-    if (phase === "start") {
-      return `已识别为采集 JSON：${stats.posts} 篇帖子、${stats.comments} 条评论。本地 BERT 会按约 ${BERT_CHUNK_SIZE} 条一批推理。`;
-    }
-    return `本地 BERT 正在推理，预计处理第 ${progress.startComment}-${progress.endComment} 条评论（第 ${progress.startBatch}/${progress.totalBatches} 批）。首次加载模型可能较慢，已等待 ${elapsedSeconds} 秒。`;
-  }
   if (phase === "start") {
-    return `已识别为采集 JSON：${stats.posts} 篇帖子、${stats.comments} 条评论，共 ${progress.totalBatches} 批。正在交给本地 LLM 分析...`;
+    return `已识别为采集 JSON：${stats.posts} 篇帖子、${stats.comments} 条评论。本地 BERT 会按约 ${BERT_CHUNK_SIZE} 条一批推理。`;
   }
-  return `本地 LLM 正在分析，预计处理第 ${progress.startComment}-${progress.endComment} 条评论（第 ${progress.startBatch}-${progress.endBatch}/${progress.totalBatches} 批，最多 ${LLM_CHUNK_CONCURRENCY} 批并发），已等待 ${elapsedSeconds} 秒。`;
+  return `本地 BERT 正在推理，预计处理第 ${progress.startComment}-${progress.endComment} 条评论（第 ${progress.startBatch}/${progress.totalBatches} 批）。首次加载模型可能较慢，已等待 ${elapsedSeconds} 秒。`;
 }
 
 async function fetchWithTimeout(url: string, timeoutMs: number, init?: RequestInit) {

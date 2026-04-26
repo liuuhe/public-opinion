@@ -1,9 +1,8 @@
 export type SentimentLabel = "positive" | "neutral" | "negative";
-export type AnalysisEngine = "llm" | "bert";
+export type AnalysisEngine = "bert";
 export type AnalysisErrorCode =
   | "search_no_posts"
   | "comment_empty"
-  | "llm_failed"
   | "unknown";
 
 export interface AnalyzeRequest {
@@ -11,7 +10,6 @@ export interface AnalyzeRequest {
   engine?: AnalysisEngine;
   maxPosts?: number;
   commentsPerPost?: number;
-  useFixture?: boolean;
 }
 
 export interface ClientCapturedAnalyzeRequest extends AnalyzeRequest {
@@ -112,7 +110,7 @@ export interface AnalysisResponse {
   report: AnalysisReport;
   diagnostics?: AnalysisDiagnostics;
   exports: AnalysisExportInfo;
-  sourceMode: "fixture" | "client";
+  sourceMode: "client";
 }
 
 export interface ApiErrorResponse {

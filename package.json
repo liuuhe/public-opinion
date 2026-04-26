@@ -14,7 +14,6 @@
     "mediacrawler:xhs": "powershell -ExecutionPolicy Bypass -File scripts/run-mediacrawler-xhs.ps1",
     "mediacrawler:to-capture": "node scripts/mediacrawler-to-capture.mjs",
     "dataset:from-captures": "node scripts/dataset-from-captures.mjs",
-    "dataset:label-llm": "node scripts/dataset-label-llm.mjs",
     "dataset:merge": "node scripts/dataset-merge.mjs",
     "check": "tsc -b"
   },
