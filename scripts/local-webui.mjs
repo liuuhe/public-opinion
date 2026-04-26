@@ -15,6 +15,8 @@ const host = process.env.LOCAL_WEBUI_HOST || "127.0.0.1";
 const bertBaseUrl = normalizeBaseUrl(process.env.BERT_INFERENCE_URL || "http://127.0.0.1:7860");
 const labels = ["positive", "neutral", "negative"];
 const captureRoot = path.join(root, "data", "captures");
+const cdpPort = 9222;
+const cdpUrl = `http://127.0.0.1:${cdpPort}/json/version`;
 let crawlerJob = null;
 
 if (!existsSync(staticRoot)) {
@@ -139,6 +141,8 @@ async function startMediaCrawler(request) {
     logs: []
   };
 
+  await ensureCdpBrowser();
+
   const crawlerScript = path.join(root, "scripts", "run-mediacrawler-xhs.ps1");
   const crawlerArgs = [
     "-NoProfile",
@@ -148,6 +152,7 @@ async function startMediaCrawler(request) {
     "--max_notes_count", String(maxPosts),
     "--max_comments_count_singlenotes", String(commentsPerPost),
     "--headless", String(headless),
+    "--start", "1",
     "--save_data_path", "..\\..\\data\\mediacrawler"
   ];
   appendCrawlerLog(`Starting MediaCrawler for "${keyword}"`);
@@ -182,6 +187,74 @@ async function startMediaCrawler(request) {
   });
 
   return publicCrawlerJob();
+}
+
+async function ensureCdpBrowser() {
+  if (await isCdpAvailable()) {
+    appendCrawlerLog(`CDP browser is ready on port ${cdpPort}.`);
+    return;
+  }
+
+  const browserPath = findBrowserPath();
+  if (!browserPath) {
+    appendCrawlerLog("未找到 Chrome/Edge。请安装 Chrome/Edge，或手动启动带 --remote-debugging-port=9222 的浏览器。");
+    return;
+  }
+
+  const userDataDir = process.env.MEDIACRAWLER_CDP_USER_DATA_DIR || path.join(process.env.LOCALAPPDATA || root, "public-opinion-chrome-cdp");
+  appendCrawlerLog(`Starting CDP browser: ${browserPath}`);
+  appendCrawlerLog(`Browser profile: ${userDataDir}`);
+  appendCrawlerLog("如果这是第一次打开采集浏览器，请先在新窗口登录小红书，再等待 MediaCrawler 继续。");
+  spawn(browserPath, [
+    `--remote-debugging-port=${cdpPort}`,
+    `--user-data-dir=${userDataDir}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    "https://www.xiaohongshu.com/"
+  ], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: false
+  }).unref();
+
+  const ready = await waitForCdp(15_000);
+  appendCrawlerLog(ready ? `CDP browser is ready on port ${cdpPort}.` : `CDP browser did not respond within 15s; MediaCrawler will keep waiting on port ${cdpPort}.`);
+}
+
+async function isCdpAvailable() {
+  try {
+    const response = await fetch(cdpUrl, { signal: AbortSignal.timeout(1_500) });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForCdp(timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await isCdpAvailable()) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 750));
+  }
+  return false;
+}
+
+function findBrowserPath() {
+  const explicit = process.env.MEDIACRAWLER_BROWSER_PATH;
+  if (explicit && existsSync(explicit)) {
+    return explicit;
+  }
+  const candidates = [
+    path.join(process.env.PROGRAMFILES || "", "Google", "Chrome", "Application", "chrome.exe"),
+    path.join(process.env["PROGRAMFILES(X86)"] || "", "Google", "Chrome", "Application", "chrome.exe"),
+    path.join(process.env.LOCALAPPDATA || "", "Google", "Chrome", "Application", "chrome.exe"),
+    path.join(process.env.PROGRAMFILES || "", "Microsoft", "Edge", "Application", "msedge.exe"),
+    path.join(process.env["PROGRAMFILES(X86)"] || "", "Microsoft", "Edge", "Application", "msedge.exe"),
+    path.join(process.env.LOCALAPPDATA || "", "Microsoft", "Edge", "Application", "msedge.exe")
+  ];
+  return candidates.find((candidate) => candidate && existsSync(candidate)) || "";
 }
 
 async function pauseMediaCrawler() {

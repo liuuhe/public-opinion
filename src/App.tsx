@@ -384,7 +384,7 @@ function MediaCrawlerPanel({
           <Terminal className="size-5 text-primary" />
           MediaCrawler 采集
         </CardTitle>
-        <CardDescription>直接从本地 WebUI 启动 vendored MediaCrawler，完成后自动转换成报告可用的 capture JSON。</CardDescription>
+        <CardDescription>开始采集会自动打开带 CDP 端口的采集浏览器。首次使用时，请先在新窗口登录小红书。</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3">
         <div className="grid gap-3 sm:grid-cols-2">
@@ -422,6 +422,7 @@ function MediaCrawlerPanel({
             状态：{status.status}
             {status.summary ? `，${status.summary.posts} 篇帖子 / ${status.summary.comments} 条评论` : ""}
           </p>
+          {status.running && <p className="text-muted-foreground mt-1 text-xs">如果日志提示等待浏览器，请切到自动打开的 Chrome/Edge 窗口完成小红书登录。</p>}
           {status.capturePath && <p className="text-muted-foreground mt-1 break-all text-xs">{status.capturePath}</p>}
         </div>
         <ScrollArea className="h-48 rounded-lg border bg-muted/30 p-3">

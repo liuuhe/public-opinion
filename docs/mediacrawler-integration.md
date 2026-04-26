@@ -26,6 +26,8 @@ data\captures\xhs-mediacrawler-*.json
 
 采集中可以点击“暂停采集”。暂停会终止当前 MediaCrawler 进程，并尝试转换已经写出的 JSONL；如果尚未采到数据，任务会停在 `paused` 状态并在日志里说明原因。
 
+WebUI 会自动启动带 CDP 端口的 Chrome/Edge 采集浏览器。第一次使用该浏览器 profile 时，需要先在新窗口登录小红书。
+
 ## CLI 采集
 
 ```powershell

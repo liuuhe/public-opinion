@@ -75,3 +75,4 @@ npm run mediacrawler:to-capture -- `
 ```
 
 WebUI 的“暂停采集”会停止当前 crawler 进程，并尝试把已经写入的 JSONL 转换成 capture JSON。如果日志持续显示 CDP 端口不可访问，需要先用远程调试端口启动 Chrome/Edge，或关闭 MediaCrawler 的“连接已有浏览器”配置。
+现在 WebUI 会在开始采集前自动启动带 `--remote-debugging-port=9222` 的 Chrome/Edge 专用采集浏览器。首次使用时需要在这个新浏览器窗口里登录小红书。
