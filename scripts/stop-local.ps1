@@ -60,7 +60,7 @@ function Is-ProjectOwnedPortProcess([int]$ProcessId, [int]$Port) {
   if ($Port -eq $WebPort -and $commandLine -match 'local-webui\.mjs') {
     return $true
   }
-  if ($Port -eq $BertPort -and $commandLine -match 'uvicorn\s+app:app') {
+  if ($Port -eq $BertPort -and $commandLine -match 'uvicorn' -and $commandLine -match 'app:app') {
     return $true
   }
   return $false
@@ -70,9 +70,9 @@ function Get-OwnedPortProcessIds {
   $ids = @()
   $listeners = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in $targetPorts }
   foreach ($listener in $listeners) {
-    $pid = [int]$listener.OwningProcess
-    if (Is-ProjectOwnedPortProcess -ProcessId $pid -Port ([int]$listener.LocalPort)) {
-      $ids += $pid
+    $ownerProcessId = [int]$listener.OwningProcess
+    if (Is-ProjectOwnedPortProcess -ProcessId $ownerProcessId -Port ([int]$listener.LocalPort)) {
+      $ids += $ownerProcessId
     }
   }
   return $ids | Sort-Object -Unique
