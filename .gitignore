@@ -16,3 +16,6 @@ bert/models/
 .deploy/
 .local/
 vendor/mediacrawler-xhs/browser_data/
+
+# Local/private graduation thesis materials. Keep these out of the public repo.
+docs/thesis/
