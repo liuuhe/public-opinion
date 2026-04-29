@@ -1,4 +1,4 @@
-# Public Opinion Local Pipeline
+# XHS Opinion Radar
 
 小红书关键词舆情分析本地工作台。当前产品路径是：
 

@@ -319,7 +319,10 @@ async function ensureCdpBrowser() {
     return;
   }
 
-  const userDataDir = process.env.MEDIACRAWLER_CDP_USER_DATA_DIR || path.join(process.env.LOCALAPPDATA || root, "public-opinion-chrome-cdp");
+  const cdpProfileRoot = process.env.LOCALAPPDATA || root;
+  const legacyUserDataDir = path.join(cdpProfileRoot, "public-opinion-chrome-cdp");
+  const defaultUserDataDir = path.join(cdpProfileRoot, "xhs-opinion-radar-chrome-cdp");
+  const userDataDir = process.env.MEDIACRAWLER_CDP_USER_DATA_DIR || (fs.existsSync(legacyUserDataDir) ? legacyUserDataDir : defaultUserDataDir);
   appendCrawlerLog(`Starting CDP browser: ${browserPath}`);
   appendCrawlerLog(`Browser profile: ${userDataDir}`);
   appendCrawlerLog("如果这是第一次打开采集浏览器，请先在新窗口登录小红书，再等待 MediaCrawler 继续。");
@@ -1015,9 +1018,9 @@ function writeCors(response, status, headers = {}) {
 function buildExportInfo(keyword) {
   const safeKeyword = keyword.replace(/[^\p{Script=Han}\w-]+/gu, "-").slice(0, 40) || "keyword";
   return {
-    jsonFilename: `public-opinion-${safeKeyword}.json`,
-    csvFilename: `public-opinion-${safeKeyword}.csv`,
-    markdownFilename: `public-opinion-${safeKeyword}.md`
+    jsonFilename: `xhs-opinion-radar-${safeKeyword}.json`,
+    csvFilename: `xhs-opinion-radar-${safeKeyword}.csv`,
+    markdownFilename: `xhs-opinion-radar-${safeKeyword}.md`
   };
 }
 

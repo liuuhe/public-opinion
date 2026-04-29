@@ -82,7 +82,7 @@ function Get-ProjectCdpBrowserProcessIds {
   $ids = @()
   $processes = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
     $_.Name -in @("chrome.exe", "msedge.exe") -and
-    [string]$_.CommandLine -match 'public-opinion-(chrome|edge)-cdp'
+    [string]$_.CommandLine -match '(public-opinion|xhs-opinion-radar)-(chrome|edge)-cdp'
   }
   foreach ($process in $processes) {
     $ids += [int]$process.ProcessId
